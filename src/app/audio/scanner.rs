@@ -17,12 +17,6 @@ pub struct AudioFile {
     pub relative_path: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ScannedSubfolder {
-    pub root_folder: String,
-    pub relative_subfolder: String,
-}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AudioVisitProgress {
     pub files: usize,
