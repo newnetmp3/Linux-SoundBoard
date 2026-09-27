@@ -669,11 +669,11 @@ fn migrate_legacy_hash_names(jobs: &[DownloadJob]) -> Vec<(String, String)> {
 fn write_source_metadata(job: &DownloadJob) -> io::Result<()> {
     let metadata = json!({
         "source_name": "MyInstants",
-        "source_url": job.page_url,
-        "title": job.title,
+        "source_url": &job.page_url,
+        "title": &job.title,
         "creator": Value::Null,
-        "media_url": job.media_url,
-        "preview_url": job.media_url,
+        "media_url": &job.media_url,
+        "preview_url": &job.media_url,
         "license": Value::Null,
         "usage_terms": "Public MyInstants download; no per-sound reuse license was exposed by the downloader.",
         "attribution": Value::Null
