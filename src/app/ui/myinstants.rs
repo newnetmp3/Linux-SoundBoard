@@ -321,7 +321,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                                     preview.connect_clicked(move |_| {
                                         gtk4::UriLauncher::new(&media_url).launch(
                                             Some(&window),
-                                            gtk4::gio::Cancellable::NONE,
+                                            None::<&gtk4::gio::Cancellable>,
                                             |result| {
                                                 if let Err(error) = result {
                                                     log::warn!(
@@ -874,13 +874,11 @@ fn import_downloaded_sounds(
                 download_root.to_string_lossy().into_owned(),
                 worker_library.clone(),
             )?;
-            let scan_cancelled = AtomicBool::new(false);
-            let refreshed = commands::refresh_sounds_with_store_cancellable(
+            let refreshed = commands::refresh_sounds_with_store(
                 worker_config,
                 worker_library,
                 worker_projection,
                 &worker_coords,
-                &scan_cancelled,
             )?;
 
             Ok::<(usize, usize, usize), commands::CommandError>((
