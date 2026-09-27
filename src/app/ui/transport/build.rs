@@ -287,7 +287,7 @@ impl TransportBar {
         apply_transport_button_size(&refresh_btn);
         utility_group.append(&refresh_btn);
 
-        let myinstants_btn = icons::button(icons::DROP_ZONE, "Download from MyInstants");
+        let myinstants_btn = icons::button(icons::DROP_ZONE, "Download Online Sounds");
         myinstants_btn.add_css_class("transport-btn");
         myinstants_btn.add_css_class("transport-icon-btn");
         apply_transport_button_size(&myinstants_btn);
