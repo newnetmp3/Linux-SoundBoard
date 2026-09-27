@@ -90,6 +90,8 @@ struct ResolvedSound {
 
 #[derive(Debug, Clone)]
 struct DownloadJob {
+    page_url: String,
+    title: String,
     media_url: String,
     final_path: PathBuf,
     legacy_path: PathBuf,
@@ -491,6 +493,14 @@ pub fn download(
                     } else {
                         reused.fetch_add(1, Ordering::Relaxed);
                     }
+                    if let Err(error) = write_source_metadata(job) {
+                        download_failed.fetch_add(1, Ordering::Relaxed);
+                        log::warn!(
+                            "Could not write MyInstants source metadata for '{}': {}",
+                            job.final_path.display(),
+                            error
+                        );
+                    }
                     if let Ok(mut paths) = paths.lock() {
                         paths.push(job.final_path.to_string_lossy().into_owned());
                     }
@@ -614,6 +624,8 @@ fn build_download_jobs(output_dir: &Path, sounds: Vec<ResolvedSound>) -> Vec<Dow
             ));
 
             DownloadJob {
+                page_url: sound.page_url,
+                title: sound.title,
                 media_url: sound.media_url,
                 final_path,
                 legacy_path,
@@ -652,6 +664,24 @@ fn migrate_legacy_hash_names(jobs: &[DownloadJob]) -> Vec<(String, String)> {
     }
 
     migrations
+}
+
+fn write_source_metadata(job: &DownloadJob) -> io::Result<()> {
+    let metadata = json!({
+        "source_name": "MyInstants",
+        "source_url": job.page_url,
+        "title": job.title,
+        "creator": Value::Null,
+        "media_url": job.media_url,
+        "preview_url": job.media_url,
+        "license": Value::Null,
+        "usage_terms": "Public MyInstants download; no per-sound reuse license was exposed by the downloader.",
+        "attribution": Value::Null
+    });
+    let sidecar = PathBuf::from(format!("{}.source.json", job.final_path.display()));
+    let encoded = serde_json::to_string_pretty(&metadata)
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    fs::write(sidecar, encoded)
 }
 
 fn fetch_text(url: &str) -> Result<String, MyInstantsError> {
