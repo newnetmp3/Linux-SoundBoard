@@ -223,7 +223,7 @@ Archives, extracted files, and license/credit notes remain inside the correspond
 
 | Source | Local-copy behavior |
 | --- | --- |
-| **MyInstants** | Drives a headless Chromium session through the site's real infinite scroll until both page height and discovered link count stay unchanged for 8 rounds; filenames use the visible sound name, with only `(2)`, `(3)`, etc. added for duplicate names; old hash-suffixed files are renamed when rediscovered |
+| **MyInstants** | Follows the site's `?page=N` listing pagination until consecutive pages add no new sounds; filenames use the visible sound name, with only `(2)`, `(3)`, etc. added for duplicate names; old hash-suffixed files are renamed when rediscovered |
 | **Sound-Buttons.com** | Browse/filter the public meme/reaction catalogue, preview the same full MP3 used for download, select individual sounds, then save validated MP3s with per-file source metadata |
 | **Movie Sound Clips** | Browse/filter the site's explicitly Creative Commons sound-effects library, preview/select WAV/MP3/FLAC clips where exposed, and preserve CC BY-NC 3.0 attribution metadata |
 | **My-Instants.com** | Browse/filter trending public sound buttons, resolve each public full MP3 from its detail page, preview/select individual clips, and save source/terms metadata |
@@ -239,7 +239,6 @@ Archives, extracted files, and license/credit notes remain inside the correspond
 > - The downloader does not bypass login walls, CAPTCHAs, paywalls, or anti-bot checks.
 > - Some sources have attribution, noncommercial, or no-derivatives license terms. The downloader keeps source/credit notes or `.source.json` sidecars with local files; those terms still apply.
 > - Download payloads are checked for expected audio/archive signatures before they are accepted. Cached files are revalidated before reuse.
-> - MyInstants infinite-scroll discovery requires Chromium plus `chromedriver`. On Arch, the `chromium` package provides both. The app does not silently fall back to the incomplete static first page.
 > - OpenGameArt and RPG Soundboard archive extraction requires `unzip`.
 > - Cancelling keeps files that already finished downloading.
 
