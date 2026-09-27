@@ -4,24 +4,21 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::config::Config;
 use crate::download_validation::validate_download_as;
 
 const ORIGIN: &str = "https://www.myinstants.com";
-const STABLE_SCROLL_ROUNDS: usize = 8;
-const MAX_SCROLL_ROUNDS: usize = 1_000;
-const SCROLL_SETTLE_MS: u64 = 850;
-const SCROLL_NUDGE_MS: u64 = 150;
-const BROWSER_START_TIMEOUT_SECS: u64 = 12;
+const MAX_INDEX_PAGES: usize = 100;
+const EMPTY_PAGE_STOP_COUNT: usize = 2;
+const PAGE_FETCH_DELAY_MS: u64 = 250;
 const DOWNLOAD_WORKERS: usize = 8;
 const MAX_FILE_STEM_BYTES: usize = 180;
 const AUDIO_EXTENSION: &str = concat!(".", "mp3");
@@ -61,14 +58,6 @@ pub struct DownloadReport {
 pub enum MyInstantsError {
     #[error("curl is required to download sounds from MyInstants")]
     CurlMissing,
-    #[error("Chromium is required for MyInstants infinite-scroll discovery")]
-    ChromiumMissing,
-    #[error("chromedriver was not found for MyInstants infinite-scroll discovery. On Arch, update/install the official Chromium package with 'sudo pacman -Syu chromium' and verify /usr/bin/chromedriver exists. You can also set CHROMEDRIVER to an explicit driver path.")]
-    ChromeDriverMissing,
-    #[error("failed to start Chromium automation: {0}")]
-    BrowserStart(String),
-    #[error("Chromium automation failed: {0}")]
-    BrowserProtocol(String),
     #[error("failed to create MyInstants download directory: {0}")]
     CreateDirectory(#[source] io::Error),
     #[error("failed to write MyInstants source manifest: {0}")]
@@ -95,278 +84,6 @@ struct DownloadJob {
     media_url: String,
     final_path: PathBuf,
     legacy_path: PathBuf,
-}
-
-struct MyInstantsBrowser {
-    child: Child,
-    endpoint: String,
-    session_id: String,
-}
-
-impl MyInstantsBrowser {
-    fn start() -> Result<Self, MyInstantsError> {
-        let chromium = find_chromium().ok_or(MyInstantsError::ChromiumMissing)?;
-        let chromedriver =
-            find_chromedriver(&chromium).ok_or(MyInstantsError::ChromeDriverMissing)?;
-
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .map_err(|error| MyInstantsError::BrowserStart(error.to_string()))?;
-        let port = listener
-            .local_addr()
-            .map_err(|error| MyInstantsError::BrowserStart(error.to_string()))?
-            .port();
-        drop(listener);
-
-        let mut child = Command::new(chromedriver)
-            .arg(format!("--port={port}"))
-            .arg("--log-level=SEVERE")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|error| MyInstantsError::BrowserStart(error.to_string()))?;
-
-        let endpoint = format!("http://127.0.0.1:{port}");
-        let deadline = Instant::now() + Duration::from_secs(BROWSER_START_TIMEOUT_SECS);
-        loop {
-            if webdriver_status_ready(&endpoint) {
-                break;
-            }
-            if let Ok(Some(status)) = child.try_wait() {
-                return Err(MyInstantsError::BrowserStart(format!(
-                    "chromedriver exited before becoming ready: {status}"
-                )));
-            }
-            if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(MyInstantsError::BrowserStart(
-                    "timed out waiting for chromedriver".to_string(),
-                ));
-            }
-            thread::sleep(Duration::from_millis(100));
-        }
-
-        let response = webdriver_request(
-            "POST",
-            &format!("{endpoint}/session"),
-            Some(json!({
-                "capabilities": {
-                    "alwaysMatch": {
-                        "browserName": "chrome",
-                        "goog:chromeOptions": {
-                            "binary": chromium.to_string_lossy(),
-                            "args": [
-                                "--headless=new",
-                                "--disable-gpu",
-                                "--disable-dev-shm-usage",
-                                "--no-first-run",
-                                "--no-default-browser-check",
-                                "--window-size=1280,900"
-                            ]
-                        }
-                    }
-                }
-            })),
-        )
-        .map_err(|error| {
-            let _ = child.kill();
-            let _ = child.wait();
-            error
-        })?;
-
-        let session_id = response
-            .pointer("/value/sessionId")
-            .or_else(|| response.get("sessionId"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                let _ = child.kill();
-                let _ = child.wait();
-                MyInstantsError::BrowserProtocol(format!(
-                    "chromedriver did not return a session id: {response}"
-                ))
-            })?
-            .to_string();
-
-        Ok(Self {
-            child,
-            endpoint,
-            session_id,
-        })
-    }
-
-    fn navigate(&self, url: &str) -> Result<(), MyInstantsError> {
-        webdriver_request(
-            "POST",
-            &self.session_url("url"),
-            Some(json!({ "url": url })),
-        )?;
-        Ok(())
-    }
-
-    fn execute(&self, script: &str) -> Result<Value, MyInstantsError> {
-        let response = webdriver_request(
-            "POST",
-            &self.session_url("execute/sync"),
-            Some(json!({
-                "script": script,
-                "args": []
-            })),
-        )?;
-        Ok(response.get("value").cloned().unwrap_or(Value::Null))
-    }
-
-    fn collect_infinite_scroll_links(
-        &self,
-        country: &str,
-        progress: &Sender<DownloadProgress>,
-        cancelled: &AtomicBool,
-    ) -> Result<Vec<String>, MyInstantsError> {
-        let url = format!("{ORIGIN}/en/index/{country}/");
-
-        // Seed discovery from the normal HTML response. MyInstants sound cards are
-        // primarily play controls rather than links, so this also protects us
-        // against a browser-rendering mismatch while the rendered page loads.
-        let static_html = fetch_text(&url)?;
-        let mut found = sound_page_urls_from_index_html(&static_html)
-            .into_iter()
-            .collect::<HashSet<_>>();
-        send_progress(
-            progress,
-            &format!(
-                "Loaded MyInstants {country}: {} sounds in the initial page…",
-                found.len()
-            ),
-            found.len(),
-            None,
-        );
-
-        self.navigate(&url)?;
-        thread::sleep(Duration::from_millis(SCROLL_SETTLE_MS));
-
-        let mut stable_rounds = 0usize;
-        let mut last_count = 0usize;
-        let mut last_height = 0u64;
-
-        for round in 1..=MAX_SCROLL_ROUNDS {
-            if cancelled.load(Ordering::Relaxed) {
-                break;
-            }
-
-            self.execute(
-                "window.scrollTo(0, Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)); return true;",
-            )?;
-            thread::sleep(Duration::from_millis(SCROLL_SETTLE_MS));
-
-            self.execute("window.scrollBy(0, -250); return true;")?;
-            thread::sleep(Duration::from_millis(SCROLL_NUDGE_MS));
-
-            self.execute(
-                "window.scrollTo(0, Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)); return true;",
-            )?;
-            thread::sleep(Duration::from_millis(SCROLL_SETTLE_MS));
-
-            let snapshot = self.execute(
-                r#"
-const links = new Set();
-
-for (const anchor of document.querySelectorAll('a[href*="/instant/"]')) {
-  const href = anchor.href;
-  if (href && !href.includes('/embed/')) {
-    links.add(href);
-  }
-}
-
-for (const element of document.querySelectorAll('[onclick*="play("]')) {
-  const onclick = element.getAttribute('onclick') || '';
-  const match = onclick.match(
-    /play\(\s*['"][^'"]+['"]\s*,\s*['"][^'"]*['"]\s*,\s*['"]([^'"]+)['"]/
-  );
-  if (!match || !match[1]) {
-    continue;
-  }
-  try {
-    links.add(new URL('/en/instant/' + match[1] + '/', window.location.origin).href);
-  } catch (_) {
-    // Ignore malformed card data and keep scanning.
-  }
-}
-
-return {
-  height: Math.max(
-    document.body ? document.body.scrollHeight : 0,
-    document.documentElement ? document.documentElement.scrollHeight : 0
-  ),
-  links: [...links],
-  playControls: document.querySelectorAll('[onclick*="play("]').length,
-  anchors: document.querySelectorAll('a[href*="/instant/"]').length
-};
-"#,
-            )?;
-
-            let height = snapshot
-                .get("height")
-                .and_then(Value::as_u64)
-                .unwrap_or_default();
-            if let Some(links) = snapshot.get("links").and_then(Value::as_array) {
-                for link in links.iter().filter_map(Value::as_str) {
-                    if link.contains("/instant/") && !link.contains("/embed/") {
-                        found.insert(link.to_string());
-                    }
-                }
-            }
-
-            let count = found.len();
-            let play_controls = snapshot
-                .get("playControls")
-                .and_then(Value::as_u64)
-                .unwrap_or_default();
-            let anchors = snapshot
-                .get("anchors")
-                .and_then(Value::as_u64)
-                .unwrap_or_default();
-            send_progress(
-                progress,
-                &format!(
-                    "Scrolling MyInstants {country}: {count} sounds found (round {round}; {play_controls} play controls, {anchors} instant links)…"
-                ),
-                count,
-                None,
-            );
-
-            if count == last_count && height == last_height {
-                stable_rounds += 1;
-            } else {
-                stable_rounds = 0;
-            }
-
-            last_count = count;
-            last_height = height;
-
-            if stable_rounds >= STABLE_SCROLL_ROUNDS {
-                break;
-            }
-        }
-
-        let mut links = found.into_iter().collect::<Vec<_>>();
-        links.sort();
-        Ok(links)
-    }
-
-    fn session_url(&self, suffix: &str) -> String {
-        format!("{}/session/{}/{}", self.endpoint, self.session_id, suffix)
-    }
-}
-
-impl Drop for MyInstantsBrowser {
-    fn drop(&mut self) {
-        let _ = webdriver_request(
-            "DELETE",
-            &format!("{}/session/{}", self.endpoint, self.session_id),
-            None,
-        );
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
 }
 
 pub fn default_download_directory() -> PathBuf {
@@ -605,7 +322,6 @@ fn discover_sound_pages(
     progress: &Sender<DownloadProgress>,
     cancelled: &AtomicBool,
 ) -> Result<Vec<String>, MyInstantsError> {
-    let browser = MyInstantsBrowser::start()?;
     let mut found = HashSet::<String>::new();
 
     for country in countries {
@@ -613,15 +329,79 @@ fn discover_sound_pages(
             break;
         }
 
-        send_progress(
-            progress,
-            &format!("Opening MyInstants {country} index…"),
-            found.len(),
-            None,
-        );
+        let mut no_new_pages = 0usize;
+        let mut country_unique = 0usize;
 
-        for link in browser.collect_infinite_scroll_links(country, progress, cancelled)? {
-            found.insert(link);
+        for page in 1..=MAX_INDEX_PAGES {
+            if cancelled.load(Ordering::Relaxed) {
+                break;
+            }
+
+            let url = if page == 1 {
+                format!("{ORIGIN}/en/index/{country}/")
+            } else {
+                format!("{ORIGIN}/en/index/{country}/?page={page}")
+            };
+
+            send_progress(
+                progress,
+                &format!("Reading MyInstants {country} page {page}…"),
+                found.len(),
+                None,
+            );
+
+            let html = match fetch_text(&url) {
+                Ok(html) => html,
+                Err(error) if page > 1 => {
+                    log::info!(
+                        "Stopping MyInstants {country} pagination at page {page}: {error}"
+                    );
+                    break;
+                }
+                Err(error) => return Err(error),
+            };
+
+            let page_links = sound_page_urls_from_index_html(&html);
+            if page_links.is_empty() {
+                no_new_pages += 1;
+            } else {
+                let mut added = 0usize;
+                for link in page_links {
+                    if found.insert(link) {
+                        added += 1;
+                        country_unique += 1;
+                    }
+                }
+
+                if added == 0 {
+                    no_new_pages += 1;
+                } else {
+                    no_new_pages = 0;
+                }
+
+                send_progress(
+                    progress,
+                    &format!(
+                        "MyInstants {country} page {page}: {added} new sounds, {country_unique} unique for this country…"
+                    ),
+                    found.len(),
+                    None,
+                );
+            }
+
+            if no_new_pages >= EMPTY_PAGE_STOP_COUNT {
+                send_progress(
+                    progress,
+                    &format!(
+                        "Finished MyInstants {country} after page {page}: {country_unique} unique sounds found."
+                    ),
+                    found.len(),
+                    None,
+                );
+                break;
+            }
+
+            thread::sleep(Duration::from_millis(PAGE_FETCH_DELAY_MS));
         }
     }
 
@@ -1039,111 +819,6 @@ fn decode_html_entities(value: &str) -> String {
         .replace("&nbsp;", " ")
 }
 
-fn find_chromium() -> Option<PathBuf> {
-    ["chromium", "chromium-browser", "google-chrome-stable", "google-chrome"]
-        .iter()
-        .copied()
-        .find_map(|binary| which::which(binary).ok())
-}
-
-fn find_chromedriver(chromium: &Path) -> Option<PathBuf> {
-    if let Some(explicit) = std::env::var_os("CHROMEDRIVER") {
-        let path = PathBuf::from(explicit);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-
-    if let Ok(path) = which::which("chromedriver") {
-        return Some(path);
-    }
-
-    let mut candidates = vec![
-        PathBuf::from("/usr/bin/chromedriver"),
-        PathBuf::from("/usr/lib/chromium/chromedriver"),
-        PathBuf::from("/usr/lib64/chromium/chromedriver"),
-        PathBuf::from("/opt/google/chrome/chromedriver"),
-    ];
-
-    if let Some(parent) = chromium.parent() {
-        candidates.push(parent.join("chromedriver"));
-    }
-
-    candidates.into_iter().find(|path| path.is_file())
-}
-
-fn webdriver_status_ready(endpoint: &str) -> bool {
-    let status_url = format!("{endpoint}/status");
-    let output = Command::new("curl")
-        .args(["--silent", "--show-error", "--max-time", "1"])
-        .arg(&status_url)
-        .output();
-
-    let Ok(output) = output else {
-        return false;
-    };
-    if !output.status.success() {
-        return false;
-    }
-
-    serde_json::from_slice::<Value>(&output.stdout)
-        .ok()
-        .and_then(|value| value.pointer("/value/ready").and_then(Value::as_bool))
-        .unwrap_or(false)
-}
-
-fn webdriver_request(
-    method: &str,
-    url: &str,
-    body: Option<Value>,
-) -> Result<Value, MyInstantsError> {
-    let mut command = Command::new("curl");
-    command.args([
-        "--silent",
-        "--show-error",
-        "--max-time",
-        "30",
-        "--request",
-        method,
-        "--header",
-        "Content-Type: application/json; charset=utf-8",
-    ]);
-
-    let body_text = body.map(|body| body.to_string());
-    if let Some(body_text) = body_text.as_deref() {
-        command.args(["--data", body_text]);
-    }
-
-    command.arg(url);
-    let output = command
-        .output()
-        .map_err(|error| MyInstantsError::BrowserProtocol(error.to_string()))?;
-
-    if !output.status.success() {
-        return Err(MyInstantsError::BrowserProtocol(
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        ));
-    }
-
-    let response: Value = serde_json::from_slice(&output.stdout).map_err(|error| {
-        MyInstantsError::BrowserProtocol(format!(
-            "invalid WebDriver response from {url}: {error}"
-        ))
-    })?;
-
-    if let Some(error_name) = response.pointer("/value/error").and_then(Value::as_str) {
-        let message = response
-            .pointer("/value/message")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown WebDriver error");
-        return Err(MyInstantsError::BrowserProtocol(format!(
-            "{error_name}: {message}"
-        )));
-    }
-
-    Ok(response)
-}
-
 fn send_progress(
     sender: &Sender<DownloadProgress>,
     message: &str,
@@ -1176,6 +851,18 @@ mod tests {
         );
         assert_eq!(download_directory(Some("   ")), default_download_directory());
         assert_eq!(download_directory(None), default_download_directory());
+    }
+
+    #[test]
+    fn pagination_urls_match_myinstants_listing_shape() {
+        let country = "us";
+        let first = format!("{ORIGIN}/en/index/{country}/");
+        let second = format!("{ORIGIN}/en/index/{country}/?page=2");
+        assert_eq!(first, "https://www.myinstants.com/en/index/us/");
+        assert_eq!(
+            second,
+            "https://www.myinstants.com/en/index/us/?page=2"
+        );
     }
 
     #[test]
