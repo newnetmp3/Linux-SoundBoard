@@ -674,6 +674,8 @@ pub struct Settings {
     pub close_to_tray: bool,
     #[serde(default)]
     pub mpris_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub myinstants_download_directory: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -802,6 +804,7 @@ impl Default for Settings {
             tray_enabled: default_tray_setting(),
             close_to_tray: default_tray_setting(),
             mpris_enabled: false,
+            myinstants_download_directory: None,
         }
     }
 }
