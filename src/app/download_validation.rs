@@ -4,10 +4,6 @@ use std::path::Path;
 
 const PROBE_BYTES: usize = 16 * 1024;
 
-pub fn validate_download(path: &Path) -> Result<(), String> {
-    validate_download_as(path, path)
-}
-
 pub fn validate_download_as(path: &Path, expected_path: &Path) -> Result<(), String> {
     let metadata = path
         .metadata()
