@@ -22,6 +22,7 @@ BuildRequires:  libXi-devel
 BuildRequires:  pkgconf-pkg-config
 BuildRequires:  systemd-rpm-macros
 
+Requires:       curl
 Requires:       pipewire
 Requires:       pipewire-utils
 Requires:       pipewire-pulseaudio

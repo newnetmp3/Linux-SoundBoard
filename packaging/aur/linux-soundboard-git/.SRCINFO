@@ -10,6 +10,7 @@ pkgbase = linux-soundboard-git
 	makedepends = git
 	makedepends = clang
 	makedepends = pkgconf
+	depends = curl
 	depends = gtk4
 	depends = libadwaita
 	depends = libpulse

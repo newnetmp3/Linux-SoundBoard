@@ -9,6 +9,7 @@ pkgbase = linux-soundboard
 	makedepends = cargo
 	makedepends = clang
 	makedepends = pkgconf
+	depends = curl
 	depends = gtk4
 	depends = libadwaita
 	depends = libpulse

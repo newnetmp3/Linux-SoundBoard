@@ -8,6 +8,9 @@ sdk-extensions:
 command: linux-soundboard
 
 finish-args:
+  # Network access is used only by online features such as the MyInstants downloader.
+  - --share=network
+
   # Display server access: Wayland primary, X11 as fallback.
   # --share=ipc is required alongside fallback-x11 for MIT-SHM shared memory.
   - --socket=wayland

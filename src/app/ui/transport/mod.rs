@@ -22,6 +22,7 @@ type HasSoundsChecker = Box<dyn Fn() -> bool + 'static>;
 type LibraryChangedCallback = Rc<dyn Fn() + 'static>;
 type ListStyleChangedCallback = Rc<dyn Fn(String) + 'static>;
 type SettingsRequestedCallback = Rc<dyn Fn() + 'static>;
+type MyInstantsRequestedCallback = Rc<dyn Fn() + 'static>;
 const TRANSPORT_BUTTON_SIZE: i32 = 31;
 
 #[derive(Clone)]
@@ -86,6 +87,7 @@ struct TransportInner {
     mic_btn: ToggleButton,
     playmode_btn: Button,
     refresh_btn: Button,
+    myinstants_btn: Button,
     search_entry: SearchEntry,
     settings_btn: Button,
     sidebar_toggle_btn: Button,
@@ -113,6 +115,7 @@ struct TransportInner {
     on_library_changed: RefCell<Option<LibraryChangedCallback>>,
     on_list_style_changed: RefCell<Option<ListStyleChangedCallback>>,
     on_settings_requested: RefCell<Option<SettingsRequestedCallback>>,
+    on_myinstants_requested: RefCell<Option<MyInstantsRequestedCallback>>,
 }
 
 impl TransportBar {

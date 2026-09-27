@@ -23,6 +23,7 @@ Package: linux-soundboard
 Architecture: amd64
 Depends: ${shlibs:Depends},
          ${misc:Depends},
+         curl,
          libgtk-4-1,
          libadwaita-1-0,
          libx11-6,

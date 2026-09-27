@@ -69,6 +69,10 @@ impl TransportBar {
         *self.inner.on_settings_requested.borrow_mut() = Some(Rc::new(f));
     }
 
+    pub fn connect_myinstants_requested<F: Fn() + 'static>(&self, f: F) {
+        *self.inner.on_myinstants_requested.borrow_mut() = Some(Rc::new(f));
+    }
+
     pub fn cleanup(&self) {
         if let Some(timeout_id) = self.inner.scrub_commit_timeout.borrow_mut().take() {
             let _ = remove_source_id_safe(timeout_id);
@@ -109,6 +113,7 @@ impl TransportBar {
         *self.inner.on_library_changed.borrow_mut() = None;
         *self.inner.on_list_style_changed.borrow_mut() = None;
         *self.inner.on_settings_requested.borrow_mut() = None;
+        *self.inner.on_myinstants_requested.borrow_mut() = None;
     }
 
     pub(super) fn connect_signals(&self) {
@@ -450,6 +455,23 @@ impl TransportBar {
                         btn.set_tooltip_text(Some("Refresh Sounds"));
                         btn.set_sensitive(true);
                     }
+                }
+            });
+        }
+
+        {
+            let inner_weak = inner_weak.clone();
+            self.inner.myinstants_btn.connect_clicked(move |_| {
+                let Some(inner_myinstants) = inner_weak.upgrade() else {
+                    return;
+                };
+                let callback = inner_myinstants.on_myinstants_requested.borrow().clone();
+                if let Some(callback) = callback {
+                    callback();
+                } else {
+                    log::warn!(
+                        "MyInstants button clicked before downloader callback was installed"
+                    );
                 }
             });
         }

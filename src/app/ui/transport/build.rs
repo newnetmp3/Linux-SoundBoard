@@ -287,6 +287,12 @@ impl TransportBar {
         apply_transport_button_size(&refresh_btn);
         utility_group.append(&refresh_btn);
 
+        let myinstants_btn = icons::button(icons::DROP_ZONE, "Download from MyInstants");
+        myinstants_btn.add_css_class("transport-btn");
+        myinstants_btn.add_css_class("transport-icon-btn");
+        apply_transport_button_size(&myinstants_btn);
+        utility_group.append(&myinstants_btn);
+
         let search_entry = SearchEntry::builder()
             .placeholder_text("Search sounds…")
             .width_request(112)
@@ -338,6 +344,7 @@ impl TransportBar {
             mic_btn: mic_btn.clone(),
             playmode_btn: playmode_btn.clone(),
             refresh_btn: refresh_btn.clone(),
+            myinstants_btn: myinstants_btn.clone(),
             search_entry: search_entry.clone(),
             settings_btn: settings_btn.clone(),
             sidebar_toggle_btn: sidebar_toggle_btn.clone(),
@@ -365,6 +372,7 @@ impl TransportBar {
             on_library_changed: RefCell::new(None),
             on_list_style_changed: RefCell::new(None),
             on_settings_requested: RefCell::new(None),
+            on_myinstants_requested: RefCell::new(None),
         });
 
         let tb = Self { inner };
