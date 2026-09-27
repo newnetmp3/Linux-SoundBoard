@@ -23,6 +23,7 @@ BuildRequires:  pkgconf-pkg-config
 BuildRequires:  systemd-rpm-macros
 
 Requires:       curl
+Requires:       unzip
 Requires:       pipewire
 Requires:       pipewire-utils
 Requires:       pipewire-pulseaudio
