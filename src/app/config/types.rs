@@ -848,4 +848,33 @@ mod tests {
     fn settings_default_disables_multiple_playbacks() {
         assert!(!Settings::default().allow_multiple_playbacks);
     }
+
+    #[test]
+    fn legacy_myinstants_folder_migrates_to_online_download_folder() {
+        let mut settings = Settings::default();
+        settings.myinstants_download_directory = Some("/tmp/old-myinstants".to_string());
+
+        settings.normalize_for_persistence();
+
+        assert_eq!(
+            settings.online_download_directory.as_deref(),
+            Some("/tmp/old-myinstants")
+        );
+        assert!(settings.myinstants_download_directory.is_none());
+    }
+
+    #[test]
+    fn generic_online_folder_wins_over_legacy_folder() {
+        let mut settings = Settings::default();
+        settings.online_download_directory = Some("/tmp/online-sounds".to_string());
+        settings.myinstants_download_directory = Some("/tmp/old-myinstants".to_string());
+
+        settings.normalize_for_persistence();
+
+        assert_eq!(
+            settings.online_download_directory.as_deref(),
+            Some("/tmp/online-sounds")
+        );
+        assert!(settings.myinstants_download_directory.is_none());
+    }
 }
