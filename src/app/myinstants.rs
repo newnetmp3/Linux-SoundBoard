@@ -464,14 +464,23 @@ pub fn download(
                 return;
             }
 
-            let result = if job
+            let cached = job
                 .final_path
                 .metadata()
                 .map(|metadata| metadata.len() > 0)
-                .unwrap_or(false)
+                .unwrap_or(false);
+            let result = if cached
+                && validate_download_as(&job.final_path, &job.final_path).is_ok()
             {
                 Ok(false)
             } else {
+                if cached {
+                    log::warn!(
+                        "Replacing invalid cached MyInstants file '{}'",
+                        job.final_path.display()
+                    );
+                    let _ = fs::remove_file(&job.final_path);
+                }
                 download_media(&job.media_url, &job.final_path).map(|()| true)
             };
 
