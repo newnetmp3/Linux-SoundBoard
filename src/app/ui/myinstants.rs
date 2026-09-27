@@ -208,7 +208,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
         configured_directory.as_deref(),
     )));
 
-    let directory_label = Label::new(Some("Local Download Folder"));
+    let directory_label = Label::new(Some("Main Download Folder"));
     directory_label.set_xalign(0.0);
     directory_label.add_css_class("heading");
     content.append(&directory_label);
@@ -260,7 +260,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
         let storage = storage.clone();
         choose_directory.connect_clicked(move |_| {
             let dialog = gtk4::FileDialog::builder()
-                .title("Select Online Sound Download Folder")
+                .title("Select Main Online Sound Download Folder")
                 .build();
             let state = Arc::clone(&state);
             let selected_directory = Rc::clone(&selected_directory);
@@ -616,7 +616,7 @@ fn source_note(text: &str) -> Label {
 
 fn update_storage_label(label: &Label, path: &Path) {
     label.set_label(&format!(
-        "{}\nSource-specific subfolders, archives, license notes, and completed audio stay here.",
+        "{}\nEach source downloads into its own subfolder under this location.",
         path.display()
     ));
 }
