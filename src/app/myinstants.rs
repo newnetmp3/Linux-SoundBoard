@@ -65,16 +65,14 @@ pub enum MyInstantsError {
 }
 
 pub fn default_download_directory() -> PathBuf {
-    let parent = Config::config_path()
+    Config::config_path()
         .parent()
         .unwrap_or_else(|| Path::new("."))
-        .to_path_buf();
-    let legacy = parent.join("myinstants");
-    if legacy.exists() {
-        legacy
-    } else {
-        parent.join("online-sounds")
-    }
+        .join("online-sounds")
+}
+
+pub fn source_download_directory(output_root: &Path) -> PathBuf {
+    output_root.join("MyInstants")
 }
 
 pub fn download_directory(configured: Option<&str>) -> PathBuf {
@@ -95,7 +93,8 @@ pub fn download(
         return Err(MyInstantsError::CurlMissing);
     }
 
-    fs::create_dir_all(output_dir).map_err(MyInstantsError::CreateDirectory)?;
+    let output_dir = source_download_directory(output_dir);
+    fs::create_dir_all(&output_dir).map_err(MyInstantsError::CreateDirectory)?;
 
     let countries = selected_countries(selection)?;
     send_progress(&progress, "Discovering MyInstants sounds…", 0, None);
@@ -144,7 +143,7 @@ pub fn download(
                 return;
             }
 
-            let result = resolve_and_download(page_url, output_dir, &seen_media, &cancelled);
+            let result = resolve_and_download(page_url, &output_dir, &seen_media, &cancelled);
             match result {
                 Ok(Some((path, was_downloaded))) => {
                     if was_downloaded {
@@ -597,6 +596,15 @@ fn send_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn myinstants_uses_source_subfolder_under_download_root() {
+        let root = PathBuf::from("/tmp/linux-soundboard-online");
+        assert_eq!(
+            source_download_directory(&root),
+            root.join("MyInstants")
+        );
+    }
 
     #[test]
     fn configured_download_directory_overrides_default() {
