@@ -15,6 +15,7 @@ const ORIGIN: &str = "https://www.myinstants.com";
 const MAX_PAGES: usize = 1_000;
 const STABLE_PAGE_LIMIT: usize = 8;
 const DOWNLOAD_WORKERS: usize = 8;
+const MAX_FILE_STEM_BYTES: usize = 180;
 const AUDIO_EXTENSION: &str = concat!(".", "mp3");
 const USER_AGENT: &str =
     concat!("Linux-SoundBoard/", env!("CARGO_PKG_VERSION"), " MyInstants downloader");
@@ -510,16 +511,18 @@ fn sanitize_file_stem(value: &str) -> String {
     let mut pending_space = false;
     for character in value.chars() {
         if character.is_alphanumeric() || matches!(character, '-' | '_') {
-            if pending_space && !out.is_empty() {
+            let needs_space = pending_space && !out.is_empty();
+            let extra_bytes = character.len_utf8() + if needs_space { 1 } else { 0 };
+            if out.len().saturating_add(extra_bytes) > MAX_FILE_STEM_BYTES {
+                break;
+            }
+            if needs_space {
                 out.push(' ');
             }
             pending_space = false;
             out.push(character);
         } else {
             pending_space = true;
-        }
-        if out.chars().count() >= 96 {
-            break;
         }
     }
     let out = out.trim();
@@ -630,5 +633,13 @@ mod tests {
         assert!(first.starts_with("GET OUT-"));
         assert!(first.ends_with(AUDIO_EXTENSION));
         assert!(!first.contains('!'));
+    }
+
+    #[test]
+    fn file_names_stay_within_safe_utf8_byte_limits() {
+        let title = "界".repeat(200);
+        let media_url = format!("https://example.test/media/sounds/unicode{AUDIO_EXTENSION}");
+        let filename = file_name_for(&title, &media_url);
+        assert!(filename.len() <= MAX_FILE_STEM_BYTES + 1 + 8 + AUDIO_EXTENSION.len());
     }
 }
