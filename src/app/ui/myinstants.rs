@@ -9,7 +9,6 @@ use gtk4::{
     Align, Box as GtkBox, Button, DropDown, Label, Orientation, ProgressBar, Window,
 };
 
-use crate::app_meta::GENERAL_TAB_ID;
 use crate::app_state::AppState;
 use crate::commands;
 use crate::myinstants::{self, DownloadReport};
@@ -33,7 +32,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
     content.set_margin_end(18);
 
     let intro = Label::new(Some(
-        "Download sounds from MyInstants and add them directly to the selected soundboard tab. Existing downloads and duplicate MyInstants audio are reused automatically.",
+        "Download sounds from MyInstants and add them directly to the selected soundboard tab. Folder views import into General. Existing downloads and duplicate MyInstants audio are reused automatically.",
     ));
     intro.set_wrap(true);
     intro.set_xalign(0.0);
@@ -137,8 +136,11 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                     .unwrap_or("us")
             };
 
-            let tab = sound_list.active_tab_id();
-            let tab_id = (tab != GENERAL_TAB_ID).then_some(tab);
+            let tab_id = match sound_list.navigation_context().scope {
+                crate::library_store::LibraryScope::ManualTab(tab_id) => Some(tab_id),
+                crate::library_store::LibraryScope::General
+                | crate::library_store::LibraryScope::Folder { .. } => None,
+            };
             let cancelled = Arc::new(AtomicBool::new(false));
             *active_cancel.borrow_mut() = Some(Arc::clone(&cancelled));
 
