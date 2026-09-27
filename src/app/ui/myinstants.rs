@@ -524,8 +524,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
         let freesound_token = freesound_token.clone();
         let freesound_limit = freesound_limit.clone();
         let ambient_choice = ambient_choice.clone();
-        let public_clip_query = public_clip_query.clone();
-        let public_clip_limit = public_clip_limit.clone();
+        let public_results = Rc::clone(&public_results);
         let progress = progress.clone();
         let status = status.clone();
         let start_button = start.clone();
@@ -573,8 +572,29 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                 .get(ambient_choice.selected() as usize)
                 .map(|(id, _, _)| (*id).to_string())
                 .unwrap_or_else(|| "all".to_string());
-            let public_query = public_clip_query.text().to_string();
-            let public_limit = public_clip_limit.value_as_int().max(1) as usize;
+            let selected_public_clips = if matches!(
+                source_index,
+                SOURCE_SOUND_BUTTONS_COM | SOURCE_MOVIE_SOUND_CLIPS | SOURCE_MY_INSTANTS_COM
+            ) {
+                public_results
+                    .borrow()
+                    .iter()
+                    .filter(|(_, selected)| selected.get())
+                    .map(|(clip, _)| clip.clone())
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            if matches!(
+                source_index,
+                SOURCE_SOUND_BUTTONS_COM | SOURCE_MOVIE_SOUND_CLIPS | SOURCE_MY_INSTANTS_COM
+            ) && selected_public_clips.is_empty()
+            {
+                status.set_label(
+                    "Browse this source first, then select at least one sound to download.",
+                );
+                return;
+            }
 
             let cancelled = Arc::new(AtomicBool::new(false));
             *active_cancel.borrow_mut() = Some(Arc::clone(&cancelled));
@@ -691,10 +711,9 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                                 SOURCE_MOVIE_SOUND_CLIPS => PublicClipSource::MovieSoundClips,
                                 _ => PublicClipSource::MyInstantsCom,
                             };
-                            public_clip_sites::download_matching(
+                            public_clip_sites::download_selected(
                                 public_source,
-                                &public_query,
-                                public_limit,
+                                &selected_public_clips,
                                 &output_dir,
                                 progress_tx,
                                 cancelled,
