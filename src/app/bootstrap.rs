@@ -85,12 +85,25 @@ pub fn run() {
     info!("Starting Linux Soundboard (GTK4)");
 
     gtk4::init().expect("Failed to initialize GTK4");
+    clear_legacy_gtk_dark_preference();
     adw::init().expect("Failed to initialize libadwaita");
     Window::set_default_icon_name(APP_ICON_NAME);
 
     let app = Application::builder().application_id(APP_ID).build();
     app.connect_activate(build_activate_handler());
     app.run();
+}
+
+#[allow(deprecated)]
+fn clear_legacy_gtk_dark_preference() {
+    if let Some(settings) = gtk4::Settings::default() {
+        if settings.is_gtk_application_prefer_dark_theme() {
+            settings.set_gtk_application_prefer_dark_theme(false);
+            log::debug!(
+                "Cleared legacy GtkSettings dark-theme preference; libadwaita StyleManager controls appearance"
+            );
+        }
+    }
 }
 
 #[allow(clippy::print_stderr)]
