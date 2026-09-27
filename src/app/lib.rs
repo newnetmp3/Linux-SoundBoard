@@ -5,8 +5,11 @@ pub mod commands;
 pub mod config;
 pub mod legacy_migration;
 pub mod library_store;
+pub(crate) mod download_validation;
 pub(crate) mod myinstants;
 pub(crate) mod online_audio;
+pub(crate) mod public_clip_sites;
+pub(crate) mod source_registry;
 
 pub(crate) mod app_meta;
 pub(crate) mod app_state;

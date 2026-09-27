@@ -206,6 +206,9 @@ Typical layout:
 ```text
 online-sounds/
 ├── MyInstants/
+├── Sound-Buttons.com/
+├── Movie Sound Clips/
+├── My-Instants.com/
 ├── Tabletop Audio/
 ├── OpenGameArt/
 ├── Freesound/
@@ -221,6 +224,9 @@ Archives, extracted files, and license/credit notes remain inside the correspond
 | Source | Local-copy behavior |
 | --- | --- |
 | **MyInstants** | Drives a headless Chromium session through the site's real infinite scroll until both page height and discovered link count stay unchanged for 8 rounds; filenames use the visible sound name, with only `(2)`, `(3)`, etc. added for duplicate names; old hash-suffixed files are renamed when rediscovered |
+| **Sound-Buttons.com** | Browse/filter the public meme/reaction catalogue, preview the same full MP3 used for download, select individual sounds, then save validated MP3s with per-file source metadata |
+| **Movie Sound Clips** | Browse/filter the site's explicitly Creative Commons sound-effects library, preview/select WAV/MP3/FLAC clips where exposed, and preserve CC BY-NC 3.0 attribution metadata |
+| **My-Instants.com** | Browse/filter trending public sound buttons, resolve each public full MP3 from its detail page, preview/select individual clips, and save source/terms metadata |
 | **Tabletop Audio** | Downloads public 10-minute ambience MP3s; choose a fantasy/D&D/RPG-focused subset or the full catalogue; SoundPad clips are excluded |
 | **OpenGameArt** | Downloads curated fantasy/RPG ZIP packs, keeps the archives, extracts them, saves credit information, and imports supported audio |
 | **Freesound** | Downloads the **original uploaded files only** through Freesound APIv2 OAuth2. Preview files are never downloaded. An OAuth2 access token is required and is entered for the current downloader session |
@@ -231,7 +237,8 @@ Archives, extracted files, and license/credit notes remain inside the correspond
 > **Notes:**
 >
 > - The downloader does not bypass login walls, CAPTCHAs, paywalls, or anti-bot checks.
-> - Some sources have attribution, noncommercial, or no-derivatives license terms. The downloader keeps source/credit notes with the local files; those terms still apply.
+> - Some sources have attribution, noncommercial, or no-derivatives license terms. The downloader keeps source/credit notes or `.source.json` sidecars with local files; those terms still apply.
+> - Download payloads are checked for expected audio/archive signatures before they are accepted. Cached files are revalidated before reuse.
 > - MyInstants infinite-scroll discovery requires Chromium plus `chromedriver`. On Arch, the `chromium` package provides both. The app does not silently fall back to the incomplete static first page.
 > - OpenGameArt and RPG Soundboard archive extraction requires `unzip`.
 > - Cancelling keeps files that already finished downloading.
@@ -415,7 +422,8 @@ scans no longer create them; scanned folders appear under `FOLDERS` instead.
 ### Select Folder
 
 - **Trigger:** Click a folder row under `FOLDERS`, or click the arrow to expand it
-- **What it does:** Filters the sound list to that folder, including everything in its subfolders
+- **What it does:** Acts as a visibility filter for the main sound list. Click a folder once to show sounds from that folder (including subfolders); click the same selected folder again to return to `General` / all visible sounds.
+- **Online sources:** The online download root is automatically registered as a scanned sound folder after a successful download. Each source subfolder therefore appears under `FOLDERS` and acts as a source visibility toggle.
 
 > **Notes:**
 >

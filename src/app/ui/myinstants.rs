@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -7,14 +7,15 @@ use std::time::Duration;
 
 use gtk4::prelude::*;
 use gtk4::{
-    Adjustment, Align, Box as GtkBox, Button, DropDown, Entry, Label, Orientation, PasswordEntry,
-    ProgressBar, SpinButton, Stack, Window,
+    Adjustment, Align, Box as GtkBox, Button, CheckButton, DropDown, Entry, Label, Orientation,
+    PasswordEntry, ProgressBar, ScrolledWindow, SpinButton, Stack, Window,
 };
 
 use crate::app_state::AppState;
 use crate::commands;
 use crate::myinstants::{self, DownloadReport};
 use crate::online_audio::{self, TabletopCollection};
+use crate::public_clip_sites::{self, PublicClipSource};
 
 use super::sound_list::SoundList;
 
@@ -25,6 +26,9 @@ const SOURCE_FREESOUND: u32 = 3;
 const SOURCE_RPG_SOUNDBOARD: u32 = 4;
 const SOURCE_AMBIENT_MIXER: u32 = 5;
 const SOURCE_KENNEY: u32 = 6;
+const SOURCE_SOUND_BUTTONS_COM: u32 = 7;
+const SOURCE_MOVIE_SOUND_CLIPS: u32 = 8;
+const SOURCE_MY_INSTANTS_COM: u32 = 9;
 
 const SOURCE_LABELS: &[&str] = &[
     "MyInstants",
@@ -34,6 +38,9 @@ const SOURCE_LABELS: &[&str] = &[
     "RPG Soundboard — free Medieval Fantasy pack",
     "Ambient Mixer — D&D / fantasy atmospheres",
     "Kenney — RPG Audio (50 CC0 sounds)",
+    "Sound-Buttons.com — memes / reactions",
+    "Movie Sound Clips — free sound-effects library",
+    "My-Instants.com — trending memes / reactions",
 ];
 
 pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound_list: SoundList) {
@@ -163,6 +170,44 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
     ));
     options_stack.add_named(&kenney_box, Some("kenney"));
 
+    let public_clips_box = GtkBox::new(Orientation::Vertical, 6);
+    public_clips_box.append(&source_note(
+        "Browse the source's validated public full-audio links. The optional filter is matched against sound titles before downloading. Source metadata is saved beside every audio file.",
+    ));
+    let public_clip_query = Entry::builder()
+        .placeholder_text("Optional title filter, e.g. bruh, laugh, reaction")
+        .hexpand(true)
+        .build();
+    public_clips_box.append(&public_clip_query);
+    let public_limit_row = GtkBox::new(Orientation::Horizontal, 8);
+    let public_limit_label = Label::new(Some("Maximum sounds"));
+    public_limit_label.set_xalign(0.0);
+    public_limit_label.set_hexpand(true);
+    public_limit_row.append(&public_limit_label);
+    let public_limit_adjustment = Adjustment::new(25.0, 1.0, 250.0, 1.0, 25.0, 0.0);
+    let public_clip_limit = SpinButton::new(Some(&public_limit_adjustment), 1.0, 0);
+    public_limit_row.append(&public_clip_limit);
+    public_clips_box.append(&public_limit_row);
+
+    let public_browse = Button::with_label("Browse / Search");
+    public_clips_box.append(&public_browse);
+
+    let public_results_box = GtkBox::new(Orientation::Vertical, 4);
+    let public_results_scroll = ScrolledWindow::builder()
+        .child(&public_results_box)
+        .min_content_height(150)
+        .max_content_height(240)
+        .vexpand(true)
+        .hscrollbar_policy(gtk4::PolicyType::Never)
+        .build();
+    public_clips_box.append(&public_results_scroll);
+
+    let public_results: Rc<
+        RefCell<Vec<(public_clip_sites::PublicClip, Rc<Cell<bool>>)>>,
+    > = Rc::new(RefCell::new(Vec::new()));
+
+    options_stack.add_named(&public_clips_box, Some("public-clips"));
+
     let ambient_box = GtkBox::new(Orientation::Vertical, 6);
     ambient_box.append(&source_note(
         "Curated D&D/fantasy atmospheres whose pages expose a Download audio action. License/source notes are stored beside the local files.",
@@ -182,6 +227,8 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
 
     {
         let options_stack = options_stack.clone();
+        let public_results_box = public_results_box.clone();
+        let public_results = Rc::clone(&public_results);
         source.connect_selected_notify(move |source| {
             let name = match source.selected() {
                 SOURCE_TABLETOP_AUDIO => "tabletop",
@@ -190,9 +237,119 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                 SOURCE_RPG_SOUNDBOARD => "rpg-soundboard",
                 SOURCE_AMBIENT_MIXER => "ambient-mixer",
                 SOURCE_KENNEY => "kenney",
+                SOURCE_SOUND_BUTTONS_COM
+                | SOURCE_MOVIE_SOUND_CLIPS
+                | SOURCE_MY_INSTANTS_COM => "public-clips",
                 _ => "myinstants",
             };
             options_stack.set_visible_child_name(name);
+            public_results.borrow_mut().clear();
+            while let Some(child) = public_results_box.first_child() {
+                public_results_box.remove(&child);
+            }
+        });
+    }
+
+    {
+        let source = source.clone();
+        let query = public_clip_query.clone();
+        let limit = public_clip_limit.clone();
+        let results_box = public_results_box.clone();
+        let results_state = Rc::clone(&public_results);
+        let window = window.clone();
+        public_browse.connect_clicked(move |button| {
+            let public_source = match source.selected() {
+                SOURCE_SOUND_BUTTONS_COM => PublicClipSource::SoundButtonsCom,
+                SOURCE_MOVIE_SOUND_CLIPS => PublicClipSource::MovieSoundClips,
+                SOURCE_MY_INSTANTS_COM => PublicClipSource::MyInstantsCom,
+                _ => return,
+            };
+            button.set_sensitive(false);
+            button.set_label("Browsing…");
+            let query = query.text().to_string();
+            let limit = limit.value_as_int().max(1) as usize;
+            let (progress_tx, _progress_rx) = mpsc::channel::<myinstants::DownloadProgress>();
+            let cancelled = AtomicBool::new(false);
+            let button_done = button.clone();
+            let results_box_done = results_box.clone();
+            let results_state_done = Rc::clone(&results_state);
+            let window_done = window.clone();
+
+            let _ = commands::dispatch_async_result(
+                "browse_public_sound_source",
+                move || public_clip_sites::browse(
+                    public_source,
+                    &query,
+                    limit,
+                    &progress_tx,
+                    &cancelled,
+                ),
+                move |result| {
+                    button_done.set_sensitive(true);
+                    button_done.set_label("Browse / Search");
+                    while let Some(child) = results_box_done.first_child() {
+                        results_box_done.remove(&child);
+                    }
+                    results_state_done.borrow_mut().clear();
+
+                    match result {
+                        Ok(clips) => {
+                            for clip in clips {
+                                let selected = Rc::new(Cell::new(true));
+                                let row = GtkBox::new(Orientation::Horizontal, 6);
+                                let check = CheckButton::builder()
+                                    .label(&clip.title)
+                                    .active(true)
+                                    .hexpand(true)
+                                    .halign(Align::Fill)
+                                    .build();
+                                {
+                                    let selected = Rc::clone(&selected);
+                                    check.connect_toggled(move |check| {
+                                        selected.set(check.is_active());
+                                    });
+                                }
+                                row.append(&check);
+
+                                let preview = Button::with_label("Preview");
+                                {
+                                    let media_url = clip
+                                        .preview_url
+                                        .clone()
+                                        .unwrap_or_else(|| clip.media_url.clone());
+                                    let window = window_done.clone();
+                                    preview.connect_clicked(move |_| {
+                                        gtk4::UriLauncher::new(&media_url).launch(
+                                            Some(&window),
+                                            None::<&gtk4::gio::Cancellable>,
+                                            |result| {
+                                                if let Err(error) = result {
+                                                    log::warn!(
+                                                        "Could not open sound preview: {error}"
+                                                    );
+                                                }
+                                            },
+                                        );
+                                    });
+                                }
+                                row.append(&preview);
+                                results_box_done.append(&row);
+                                results_state_done
+                                    .borrow_mut()
+                                    .push((clip, selected));
+                            }
+                        }
+                        Err(error) => {
+                            let label = Label::new(Some(&format!(
+                                "Browse failed: {error}"
+                            )));
+                            label.set_wrap(true);
+                            label.set_xalign(0.0);
+                            results_box_done.append(&label);
+                        }
+                    }
+                },
+            );
         });
     }
 
@@ -367,6 +524,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
         let freesound_token = freesound_token.clone();
         let freesound_limit = freesound_limit.clone();
         let ambient_choice = ambient_choice.clone();
+        let public_results = Rc::clone(&public_results);
         let progress = progress.clone();
         let status = status.clone();
         let start_button = start.clone();
@@ -414,6 +572,29 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                 .get(ambient_choice.selected() as usize)
                 .map(|(id, _, _)| (*id).to_string())
                 .unwrap_or_else(|| "all".to_string());
+            let selected_public_clips = if matches!(
+                source_index,
+                SOURCE_SOUND_BUTTONS_COM | SOURCE_MOVIE_SOUND_CLIPS | SOURCE_MY_INSTANTS_COM
+            ) {
+                public_results
+                    .borrow()
+                    .iter()
+                    .filter(|(_, selected)| selected.get())
+                    .map(|(clip, _)| clip.clone())
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
+            if matches!(
+                source_index,
+                SOURCE_SOUND_BUTTONS_COM | SOURCE_MOVIE_SOUND_CLIPS | SOURCE_MY_INSTANTS_COM
+            ) && selected_public_clips.is_empty()
+            {
+                status.set_label(
+                    "Browse this source first, then select at least one sound to download.",
+                );
+                return;
+            }
 
             let cancelled = Arc::new(AtomicBool::new(false));
             *active_cancel.borrow_mut() = Some(Arc::clone(&cancelled));
@@ -475,6 +656,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
             let active_cancel_done = Rc::clone(&active_cancel);
             let source_name_done = source_name.clone();
 
+            let download_root_for_import = output_dir.clone();
             let dispatch = commands::dispatch_async_result(
                 "online_sound_download",
                 move || -> Result<DownloadReport, String> {
@@ -521,6 +703,23 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                             cancelled,
                         )
                         .map_err(|error| error.to_string()),
+                        SOURCE_SOUND_BUTTONS_COM
+                        | SOURCE_MOVIE_SOUND_CLIPS
+                        | SOURCE_MY_INSTANTS_COM => {
+                            let public_source = match source_index {
+                                SOURCE_SOUND_BUTTONS_COM => PublicClipSource::SoundButtonsCom,
+                                SOURCE_MOVIE_SOUND_CLIPS => PublicClipSource::MovieSoundClips,
+                                _ => PublicClipSource::MyInstantsCom,
+                            };
+                            public_clip_sites::download_selected(
+                                public_source,
+                                &selected_public_clips,
+                                &output_dir,
+                                progress_tx,
+                                cancelled,
+                            )
+                            .map_err(|error| error.to_string())
+                        }
                         _ => myinstants::download(
                             &myinstants_selection,
                             &output_dir,
@@ -579,6 +778,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                     import_downloaded_sounds(
                         report,
                         tab_id,
+                        download_root_for_import,
                         source_name_done,
                         state_done,
                         sound_list_done,
@@ -625,6 +825,7 @@ fn update_storage_label(label: &Label, path: &Path) {
 fn import_downloaded_sounds(
     report: DownloadReport,
     tab_id: Option<String>,
+    download_root: std::path::PathBuf,
     source_name: String,
     state: Arc<AppState>,
     sound_list: SoundList,
@@ -644,6 +845,7 @@ fn import_downloaded_sounds(
     let worker_config = Arc::clone(&state.config);
     let worker_library = state.library.clone();
     let worker_coords = state.loudness_coordinators.clone();
+    let worker_projection = state.hotkey_projection.clone();
 
     let sound_list_done = sound_list;
     let status_done = status.clone();
@@ -663,19 +865,35 @@ fn import_downloaded_sounds(
             let imported = commands::import_files_to_tab_with_store(
                 paths,
                 tab_id,
-                worker_config,
-                worker_library,
+                Arc::clone(&worker_config),
+                worker_library.clone(),
                 &worker_coords,
             )?;
-            Ok::<(usize, usize), commands::CommandError>((migrated, imported))
+
+            commands::add_sound_folder_with_store(
+                download_root.to_string_lossy().into_owned(),
+                worker_library.clone(),
+            )?;
+            let refreshed = commands::refresh_sounds_with_store(
+                worker_config,
+                worker_library,
+                worker_projection,
+                &worker_coords,
+            )?;
+
+            Ok::<(usize, usize, usize), commands::CommandError>((
+                migrated,
+                imported,
+                refreshed.refreshed,
+            ))
         },
         move |result| {
             start_done.set_sensitive(true);
             close_done.set_sensitive(true);
 
             match result {
-                Ok((migrated, imported)) => {
-                    if migrated > 0 || imported > 0 {
+                Ok((migrated, imported, refreshed)) => {
+                    if migrated > 0 || imported > 0 || refreshed > 0 {
                         sound_list_done.refresh_from_state();
                     }
                     let migrated_note = if migrated == 0 {
@@ -689,7 +907,7 @@ fn import_downloaded_sounds(
                         format!(", {failed} failed")
                     };
                     let message = format!(
-                        "{source_name_done}: {downloaded} downloaded, {reused} reused, {imported} added{migrated_note}{failed_note}"
+                        "{source_name_done}: {downloaded} downloaded, {reused} reused, {imported} added, source folders refreshed{migrated_note}{failed_note}"
                     );
                     status_done.set_label(&message);
                     crate::ui_event_bridge::post_toast(message);

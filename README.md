@@ -197,7 +197,7 @@ service and virtual microphone can stay running.
   `library.sqlite3`
 - **Large libraries:** Loaded in bounded pages
 - **Drag and drop:** Add files or folders from a file manager
-- **Online sound downloader:** Keep local copies from MyInstants, Tabletop Audio, curated OpenGameArt RPG packs, Freesound original files (OAuth2 only; never previews), RPG Soundboard's free Medieval Fantasy pack, curated Ambient Mixer D&D/fantasy atmospheres, and Kenney's CC0 RPG Audio pack; MyInstants uses a real Chromium-driven infinite scroll and saves files under their visible sound names; choose and remember a main download folder with one subfolder per source, preserve license/credit notes, resume supported downloads, and import compatible audio into the active tab
+- **Online sound downloader:** Browse/search, preview, select, and keep local copies from tested sources including MyInstants, Sound-Buttons.com, Movie Sound Clips, My-Instants.com, Tabletop Audio, curated OpenGameArt RPG packs, Freesound original files (OAuth2 only; never previews), RPG Soundboard's free Medieval Fantasy pack, curated Ambient Mixer D&D/fantasy atmospheres, and Kenney's CC0 RPG Audio pack. Downloads are signature-validated, stored in one subfolder per source, and accompanied by source/license metadata when available. The 100-site candidate registry is tracked separately; a site is not exposed as working until its download flow has been validated.
 - **Search:** Filter the visible sound list
 - **Hotkeys:** Per-sound bindings and shared playback controls
 

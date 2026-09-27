@@ -14,6 +14,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::config::Config;
+use crate::download_validation::validate_download_as;
 
 const ORIGIN: &str = "https://www.myinstants.com";
 const STABLE_SCROLL_ROUNDS: usize = 8;
@@ -89,6 +90,8 @@ struct ResolvedSound {
 
 #[derive(Debug, Clone)]
 struct DownloadJob {
+    page_url: String,
+    title: String,
     media_url: String,
     final_path: PathBuf,
     legacy_path: PathBuf,
@@ -463,14 +466,23 @@ pub fn download(
                 return;
             }
 
-            let result = if job
+            let cached = job
                 .final_path
                 .metadata()
                 .map(|metadata| metadata.len() > 0)
-                .unwrap_or(false)
+                .unwrap_or(false);
+            let result = if cached
+                && validate_download_as(&job.final_path, &job.final_path).is_ok()
             {
                 Ok(false)
             } else {
+                if cached {
+                    log::warn!(
+                        "Replacing invalid cached MyInstants file '{}'",
+                        job.final_path.display()
+                    );
+                    let _ = fs::remove_file(&job.final_path);
+                }
                 download_media(&job.media_url, &job.final_path).map(|()| true)
             };
 
@@ -480,6 +492,14 @@ pub fn download(
                         downloaded.fetch_add(1, Ordering::Relaxed);
                     } else {
                         reused.fetch_add(1, Ordering::Relaxed);
+                    }
+                    if let Err(error) = write_source_metadata(job) {
+                        download_failed.fetch_add(1, Ordering::Relaxed);
+                        log::warn!(
+                            "Could not write MyInstants source metadata for '{}': {}",
+                            job.final_path.display(),
+                            error
+                        );
                     }
                     if let Ok(mut paths) = paths.lock() {
                         paths.push(job.final_path.to_string_lossy().into_owned());
@@ -604,6 +624,8 @@ fn build_download_jobs(output_dir: &Path, sounds: Vec<ResolvedSound>) -> Vec<Dow
             ));
 
             DownloadJob {
+                page_url: sound.page_url,
+                title: sound.title,
                 media_url: sound.media_url,
                 final_path,
                 legacy_path,
@@ -642,6 +664,24 @@ fn migrate_legacy_hash_names(jobs: &[DownloadJob]) -> Vec<(String, String)> {
     }
 
     migrations
+}
+
+fn write_source_metadata(job: &DownloadJob) -> io::Result<()> {
+    let metadata = json!({
+        "source_name": "MyInstants",
+        "source_url": &job.page_url,
+        "title": &job.title,
+        "creator": Value::Null,
+        "media_url": &job.media_url,
+        "preview_url": &job.media_url,
+        "license": Value::Null,
+        "usage_terms": "Public MyInstants download; no per-sound reuse license was exposed by the downloader.",
+        "attribution": Value::Null
+    });
+    let sidecar = PathBuf::from(format!("{}.source.json", job.final_path.display()));
+    let encoded = serde_json::to_string_pretty(&metadata)
+        .map_err(|error| io::Error::other(error.to_string()))?;
+    fs::write(sidecar, encoded)
 }
 
 fn fetch_text(url: &str) -> Result<String, MyInstantsError> {
@@ -724,6 +764,14 @@ fn download_media(url: &str, final_path: &Path) -> Result<(), MyInstantsError> {
         return Err(MyInstantsError::Request {
             url: url.to_string(),
             message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        });
+    }
+
+    if let Err(message) = validate_download_as(&part_path, final_path) {
+        let _ = fs::remove_file(&part_path);
+        return Err(MyInstantsError::Request {
+            url: url.to_string(),
+            message: format!("download validation failed: {message}"),
         });
     }
 
