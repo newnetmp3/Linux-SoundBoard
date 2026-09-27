@@ -896,6 +896,7 @@ fn decode_html_entities(value: &str) -> String {
 fn find_chromium() -> Option<PathBuf> {
     ["chromium", "chromium-browser", "google-chrome-stable", "google-chrome"]
         .iter()
+        .copied()
         .find_map(|binary| which::which(binary).ok())
 }
 
@@ -936,10 +937,9 @@ fn webdriver_request(
         "Content-Type: application/json; charset=utf-8",
     ]);
 
-    let body_text;
-    if let Some(body) = body {
-        body_text = body.to_string();
-        command.args(["--data", &body_text]);
+    let body_text = body.map(|body| body.to_string());
+    if let Some(body_text) = body_text.as_deref() {
+        command.args(["--data", body_text]);
     }
 
     command.arg(url);
