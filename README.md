@@ -197,7 +197,7 @@ service and virtual microphone can stay running.
   `library.sqlite3`
 - **Large libraries:** Loaded in bounded pages
 - **Drag and drop:** Add files or folders from a file manager
-- **MyInstants downloader:** Download country indexes or all supported English-speaking indexes directly into the active tab, choose and remember the download folder, and resume interrupted downloads with duplicate protection
+- **Online sound downloader:** Keep local copies from MyInstants, Tabletop Audio, curated OpenGameArt RPG packs, Freesound original files (OAuth2 only; never previews), RPG Soundboard's free Medieval Fantasy pack, and curated Ambient Mixer D&D/fantasy atmospheres; choose and remember the download folder, preserve license/credit notes, resume supported downloads, and import compatible audio into the active tab
 - **Search:** Filter the visible sound list
 - **Hotkeys:** Per-sound bindings and shared playback controls
 
@@ -277,7 +277,7 @@ Removing a sound from the library does not delete the original audio file.
 <summary><strong>Arch Linux</strong></summary>
 
 ```bash
-sudo pacman -S cargo rust pkgconf clang gtk4 libadwaita libpulse opus libx11 libxi pipewire pipewire-pulse wireplumber
+sudo pacman -S cargo rust pkgconf clang gtk4 libadwaita libpulse opus libx11 libxi pipewire pipewire-pulse wireplumber curl unzip
 ```
 
 </details>
@@ -288,7 +288,7 @@ sudo pacman -S cargo rust pkgconf clang gtk4 libadwaita libpulse opus libx11 lib
 ```bash
 sudo apt install build-essential cargo rustc pkg-config \
   libgtk-4-dev libadwaita-1-dev libpulse-dev libopus-dev libpipewire-0.3-dev \
-  libx11-dev libxi-dev libclang-dev pipewire pipewire-pulse wireplumber pulseaudio-utils
+  libx11-dev libxi-dev libclang-dev pipewire pipewire-pulse wireplumber pulseaudio-utils curl unzip
 ```
 
 </details>
@@ -299,7 +299,7 @@ sudo apt install build-essential cargo rustc pkg-config \
 ```bash
 sudo dnf install cargo rust gcc gcc-c++ clang-devel pkgconf-pkg-config \
   gtk4-devel libadwaita-devel pulseaudio-libs-devel opus-devel libX11-devel \
-  libXi-devel pipewire-devel pipewire pipewire-utils pipewire-pulseaudio wireplumber pulseaudio-utils
+  libXi-devel pipewire-devel pipewire pipewire-utils pipewire-pulseaudio wireplumber pulseaudio-utils curl unzip
 ```
 
 </details>
