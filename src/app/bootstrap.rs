@@ -112,14 +112,16 @@ fn parse_graph_snapshot_arg() -> Option<PathBuf> {
     None
 }
 
-fn init_logging() {
-    let env = env_logger::Env::default().default_filter_or(
-        "warn,\
+const DEFAULT_LOG_FILTER: &str = "warn,\
+symphonia_bundle_mp3::layer3=error,\
+symphonia_bundle_mp3::demuxer=error,\
 linux_soundboard::audio::engine_server=info,\
 linux_soundboard::init::audio=info,\
 linux_soundboard::audio::player=info,\
-linux_soundboard::audio::player::source_routing=info",
-    );
+linux_soundboard::audio::player::source_routing=info";
+
+fn init_logging() {
+    let env = env_logger::Env::default().default_filter_or(DEFAULT_LOG_FILTER);
     env_logger::Builder::from_env(env).init();
 }
 
@@ -1936,6 +1938,14 @@ fn systemd_quote(path: &std::path::Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn default_log_filter_quiets_recoverable_mp3_seek_noise() {
+        assert!(DEFAULT_LOG_FILTER.contains("symphonia_bundle_mp3::layer3=error"));
+        assert!(DEFAULT_LOG_FILTER.contains("symphonia_bundle_mp3::demuxer=error"));
+    }
+
     use super::*;
     use crate::config::Sound;
     use std::cell::{Cell, RefCell};
