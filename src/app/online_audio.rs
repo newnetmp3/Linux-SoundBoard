@@ -1,6 +1,5 @@
 use rayon::prelude::*;
 use serde::Deserialize;
-use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -130,7 +129,6 @@ struct OpenGameArtPack {
     id: &'static str,
     title: &'static str,
     page_url: &'static str,
-    download_url: &'static str,
     archive_name: &'static str,
     license: &'static str,
     attribution: &'static str,
@@ -141,7 +139,6 @@ const OPEN_GAME_ART_CURATED: &[OpenGameArtPack] = &[
         id: "kenney-50",
         title: "50 RPG Sound Effects",
         page_url: "https://opengameart.org/content/50-rpg-sound-effects",
-        download_url: "https://opengameart.org/sites/default/files/RPGsounds_Kenney.zip",
         archive_name: "RPGsounds_Kenney.zip",
         license: "CC0",
         attribution: "Kenney / Kenney.nl (credit optional under CC0)",
@@ -150,7 +147,6 @@ const OPEN_GAME_ART_CURATED: &[OpenGameArtPack] = &[
         id: "rubberduck-80",
         title: "80 CC0 RPG SFX",
         page_url: "https://opengameart.org/content/80-cc0-rpg-sfx",
-        download_url: "https://opengameart.org/sites/default/files/80-CC0-RPG-SFX.zip",
         archive_name: "80-CC0-RPG-SFX.zip",
         license: "CC0",
         attribution: "rubberduck",
@@ -159,7 +155,6 @@ const OPEN_GAME_ART_CURATED: &[OpenGameArtPack] = &[
         id: "fantasy-library",
         title: "Fantasy Sound Effects Library",
         page_url: "https://opengameart.org/content/fantasy-sound-effects-library",
-        download_url: "https://opengameart.org/sites/default/files/Fantasy%20Sound%20Library.zip",
         archive_name: "Fantasy Sound Library.zip",
         license: "CC BY 3.0",
         attribution: "Little Robot Sound Factory — www.littlerobotsoundfactory.com",
@@ -306,7 +301,26 @@ pub fn download_opengameart(
         fs::create_dir_all(&pack_dir).map_err(OnlineAudioError::CreateDirectory)?;
         let archive_path = pack_dir.join(pack.archive_name);
 
-        match download_binary("OpenGameArt", pack.download_url, &archive_path, None) {
+        let page_html = match fetch_text("OpenGameArt", pack.page_url, None) {
+            Ok(html) => html,
+            Err(error) => {
+                report.failed += 1;
+                log::warn!("OpenGameArt pack page failed: {error}");
+                continue;
+            }
+        };
+        let Some(archive_href) = find_href_containing(&page_html, ".zip") else {
+            report.failed += 1;
+            log::warn!("OpenGameArt pack '{}' did not expose a ZIP download", pack.title);
+            continue;
+        };
+        let Some(archive_url) = absolute_url(pack.page_url, &archive_href) else {
+            report.failed += 1;
+            log::warn!("OpenGameArt pack '{}' ZIP URL could not be resolved", pack.title);
+            continue;
+        };
+
+        match download_binary("OpenGameArt", &archive_url, &archive_path, None) {
             Ok(true) => report.downloaded += 1,
             Ok(false) => report.reused += 1,
             Err(error) => {
@@ -420,8 +434,10 @@ pub fn download_freesound_originals(
                     } else {
                         reused.fetch_add(1, Ordering::Relaxed);
                     }
-                    if let Ok(mut paths) = paths.lock() {
-                        paths.push(final_path.to_string_lossy().into_owned());
+                    if is_audio_extension(extension) {
+                        if let Ok(mut paths) = paths.lock() {
+                            paths.push(final_path.to_string_lossy().into_owned());
+                        }
                     }
                 }
                 Err(error) => {
@@ -478,8 +494,8 @@ pub fn download_rpg_soundboard_pack(
 
     if cancelled.load(Ordering::Relaxed) {
         return Ok(DownloadReport {
-            downloaded: usize::from(was_downloaded),
-            reused: usize::from(!was_downloaded),
+            downloaded: if was_downloaded { 1 } else { 0 },
+            reused: if was_downloaded { 0 } else { 1 },
             cancelled: true,
             ..DownloadReport::default()
         });
@@ -505,8 +521,8 @@ Known music credits include Kira Daly (CC BY), Strobotone (CC BY-ND), cymbalBird
     send_progress(&progress, "RPG Soundboard pack ready", 2, Some(2));
     Ok(DownloadReport {
         paths,
-        downloaded: usize::from(was_downloaded),
-        reused: usize::from(!was_downloaded),
+        downloaded: if was_downloaded { 1 } else { 0 },
+        reused: if was_downloaded { 0 } else { 1 },
         failed: 0,
         cancelled: false,
     })
@@ -603,12 +619,13 @@ fn selected_opengameart_packs(
 
 fn selected_ambient_mixer(
     selection: &str,
-) -> Result<Vec<&'static (&'static str, &'static str, &'static str)>, OnlineAudioError> {
+) -> Result<Vec<(&'static str, &'static str, &'static str)>, OnlineAudioError> {
     if selection == "all" {
-        return Ok(AMBIENT_MIXER_CHOICES.iter().skip(1).collect());
+        return Ok(AMBIENT_MIXER_CHOICES.iter().skip(1).copied().collect());
     }
     AMBIENT_MIXER_CHOICES
         .iter()
+        .copied()
         .find(|(id, _, _)| *id == selection)
         .map(|choice| vec![choice])
         .ok_or_else(|| OnlineAudioError::InvalidAmbientMixerSelection(selection.to_string()))
@@ -1071,7 +1088,7 @@ fn sanitize_file_stem(value: &str) -> String {
     for character in value.chars() {
         if character.is_alphanumeric() || matches!(character, '-' | '_') {
             let needs_space = pending_space && !out.is_empty();
-            let extra_bytes = character.len_utf8() + usize::from(needs_space);
+            let extra_bytes = character.len_utf8() + if needs_space { 1 } else { 0 };
             if out.len().saturating_add(extra_bytes) > MAX_FILE_STEM_BYTES {
                 break;
             }
