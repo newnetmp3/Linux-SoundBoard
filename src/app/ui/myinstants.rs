@@ -7,49 +7,184 @@ use std::time::Duration;
 
 use gtk4::prelude::*;
 use gtk4::{
-    Align, Box as GtkBox, Button, DropDown, Label, Orientation, ProgressBar, Window,
+    Adjustment, Align, Box as GtkBox, Button, DropDown, Entry, Label, Orientation, PasswordEntry,
+    ProgressBar, SpinButton, Stack, Window,
 };
 
 use crate::app_state::AppState;
 use crate::commands;
 use crate::myinstants::{self, DownloadReport};
+use crate::online_audio::{self, TabletopCollection};
 
 use super::sound_list::SoundList;
 
+const SOURCE_MYINSTANTS: u32 = 0;
+const SOURCE_TABLETOP_AUDIO: u32 = 1;
+const SOURCE_OPENGAMEART: u32 = 2;
+const SOURCE_FREESOUND: u32 = 3;
+const SOURCE_RPG_SOUNDBOARD: u32 = 4;
+const SOURCE_AMBIENT_MIXER: u32 = 5;
+
+const SOURCE_LABELS: &[&str] = &[
+    "MyInstants",
+    "Tabletop Audio — D&D / fantasy ambience",
+    "OpenGameArt — fantasy/RPG sound packs",
+    "Freesound — original files only",
+    "RPG Soundboard — free Medieval Fantasy pack",
+    "Ambient Mixer — D&D / fantasy atmospheres",
+];
+
 pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound_list: SoundList) {
     let window = Window::builder()
-        .title("MyInstants Downloader")
+        .title("Online Sound Downloader")
         .transient_for(parent)
         .modal(true)
-        .default_width(620)
-        .default_height(400)
-        .resizable(false)
+        .default_width(700)
+        .default_height(560)
+        .resizable(true)
         .build();
 
-    let content = GtkBox::new(Orientation::Vertical, 14);
+    let content = GtkBox::new(Orientation::Vertical, 12);
     content.set_margin_top(18);
     content.set_margin_bottom(18);
     content.set_margin_start(18);
     content.set_margin_end(18);
 
     let intro = Label::new(Some(
-        "Download sounds from MyInstants and add them directly to the selected soundboard tab. Folder views import into General. Existing downloads and duplicate MyInstants audio are reused automatically.",
+        "Download local copies from online sound libraries and import supported audio directly into the selected soundboard tab.",
     ));
     intro.set_wrap(true);
     intro.set_xalign(0.0);
     content.append(&intro);
 
-    let country_label = Label::new(Some("Index"));
-    country_label.set_xalign(0.0);
-    country_label.add_css_class("heading");
-    content.append(&country_label);
+    let source_label = Label::new(Some("Source"));
+    source_label.set_xalign(0.0);
+    source_label.add_css_class("heading");
+    content.append(&source_label);
 
+    let source = DropDown::from_strings(SOURCE_LABELS);
+    source.set_selected(SOURCE_MYINSTANTS);
+    source.set_hexpand(true);
+    content.append(&source);
+
+    let options_stack = Stack::builder()
+        .transition_type(gtk4::StackTransitionType::Crossfade)
+        .hexpand(true)
+        .build();
+
+    let myinstants_box = GtkBox::new(Orientation::Vertical, 6);
+    let myinstants_note = source_note(
+        "Country index downloads. Existing files are reused and interrupted downloads resume.",
+    );
+    myinstants_box.append(&myinstants_note);
     let mut country_labels = vec!["All English-speaking indexes"];
     country_labels.extend(myinstants::COUNTRY_CHOICES.iter().map(|(_, label)| *label));
     let country = DropDown::from_strings(&country_labels);
     country.set_selected(1);
     country.set_hexpand(true);
-    content.append(&country);
+    myinstants_box.append(&country);
+    options_stack.add_named(&myinstants_box, Some("myinstants"));
+
+    let tabletop_box = GtkBox::new(Orientation::Vertical, 6);
+    tabletop_box.append(&source_note(
+        "Downloads Tabletop Audio's public 10-minute ambience tracks as local MP3 files. SoundPad clips are intentionally excluded.",
+    ));
+    let tabletop_collection = DropDown::from_strings(online_audio::TABLETOP_COLLECTIONS);
+    tabletop_collection.set_selected(0);
+    tabletop_collection.set_hexpand(true);
+    tabletop_box.append(&tabletop_collection);
+    options_stack.add_named(&tabletop_box, Some("tabletop"));
+
+    let opengameart_box = GtkBox::new(Orientation::Vertical, 6);
+    opengameart_box.append(&source_note(
+        "Curated downloadable fantasy/RPG packs. ZIP archives are kept locally, extracted, and their audio files are imported.",
+    ));
+    let opengameart_labels = online_audio::OPENGAMEART_PACKS
+        .iter()
+        .map(|(_, label)| *label)
+        .collect::<Vec<_>>();
+    let opengameart_pack = DropDown::from_strings(&opengameart_labels);
+    opengameart_pack.set_selected(0);
+    opengameart_pack.set_hexpand(true);
+    opengameart_box.append(&opengameart_pack);
+    options_stack.add_named(&opengameart_box, Some("opengameart"));
+
+    let freesound_box = GtkBox::new(Orientation::Vertical, 6);
+    freesound_box.append(&source_note(
+        "Original Freesound uploads only — no previews. Freesound requires an OAuth2 access token for original-file downloads.",
+    ));
+    let freesound_help = Label::new(None);
+    freesound_help.set_xalign(0.0);
+    freesound_help.set_wrap(true);
+    freesound_help.set_markup(
+        "Create Freesound API credentials and authorize your account using the <a href=\"https://freesound.org/docs/api/authentication.html\">official OAuth2 instructions</a>, then paste the temporary access token below.",
+    );
+    freesound_box.append(&freesound_help);
+
+    let freesound_query = Entry::builder()
+        .placeholder_text("Search, e.g. dungeon tavern dragon sword magic")
+        .hexpand(true)
+        .build();
+    freesound_box.append(&freesound_query);
+
+    let freesound_token = PasswordEntry::builder()
+        .placeholder_text("OAuth2 access token")
+        .show_peek_icon(true)
+        .hexpand(true)
+        .build();
+    freesound_box.append(&freesound_token);
+
+    let limit_row = GtkBox::new(Orientation::Horizontal, 8);
+    let limit_label = Label::new(Some("Maximum originals"));
+    limit_label.set_xalign(0.0);
+    limit_label.set_hexpand(true);
+    limit_row.append(&limit_label);
+    let limit_adjustment = Adjustment::new(25.0, 1.0, 150.0, 1.0, 10.0, 0.0);
+    let freesound_limit = SpinButton::new(Some(&limit_adjustment), 1.0, 0);
+    limit_row.append(&freesound_limit);
+    freesound_box.append(&limit_row);
+    options_stack.add_named(&freesound_box, Some("freesound"));
+
+    let rpg_soundboard_box = GtkBox::new(Orientation::Vertical, 6);
+    rpg_soundboard_box.append(&source_note(
+        "Downloads RPG Soundboard's publicly offered Medieval Fantasy starter soundboard, keeps the .rpsb archive locally, extracts its bundled audio, and imports supported files.",
+    ));
+    let rpg_size = Label::new(Some("Published pack size: about 457 MB"));
+    rpg_size.set_xalign(0.0);
+    rpg_size.add_css_class("dim-label");
+    rpg_soundboard_box.append(&rpg_size);
+    options_stack.add_named(&rpg_soundboard_box, Some("rpg-soundboard"));
+
+    let ambient_box = GtkBox::new(Orientation::Vertical, 6);
+    ambient_box.append(&source_note(
+        "Curated D&D/fantasy atmospheres whose pages expose a Download audio action. License/source notes are stored beside the local files.",
+    ));
+    let ambient_labels = online_audio::AMBIENT_MIXER_CHOICES
+        .iter()
+        .map(|(_, label, _)| *label)
+        .collect::<Vec<_>>();
+    let ambient_choice = DropDown::from_strings(&ambient_labels);
+    ambient_choice.set_selected(0);
+    ambient_choice.set_hexpand(true);
+    ambient_box.append(&ambient_choice);
+    options_stack.add_named(&ambient_box, Some("ambient-mixer"));
+
+    content.append(&options_stack);
+
+    {
+        let options_stack = options_stack.clone();
+        source.connect_selected_notify(move |source| {
+            let name = match source.selected() {
+                SOURCE_TABLETOP_AUDIO => "tabletop",
+                SOURCE_OPENGAMEART => "opengameart",
+                SOURCE_FREESOUND => "freesound",
+                SOURCE_RPG_SOUNDBOARD => "rpg-soundboard",
+                SOURCE_AMBIENT_MIXER => "ambient-mixer",
+                _ => "myinstants",
+            };
+            options_stack.set_visible_child_name(name);
+        });
+    }
 
     let configured_directory = state
         .config
@@ -61,7 +196,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
         configured_directory.as_deref(),
     )));
 
-    let directory_label = Label::new(Some("Download Folder"));
+    let directory_label = Label::new(Some("Local Download Folder"));
     directory_label.set_xalign(0.0);
     directory_label.add_css_class("heading");
     content.append(&directory_label);
@@ -113,7 +248,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
         let storage = storage.clone();
         choose_directory.connect_clicked(move |_| {
             let dialog = gtk4::FileDialog::builder()
-                .title("Select MyInstants Download Folder")
+                .title("Select Online Sound Download Folder")
                 .build();
             let state = Arc::clone(&state);
             let selected_directory = Rc::clone(&selected_directory);
@@ -140,13 +275,13 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                             *selected_directory.borrow_mut() = path.clone();
                             update_storage_label(&storage, &path);
                             crate::ui_event_bridge::post_toast(
-                                "MyInstants download folder updated".to_string(),
+                                "Online sound download folder updated".to_string(),
                             );
                         }
                         Err(error) => {
-                            log::warn!("Could not save MyInstants download folder: {error}");
+                            log::warn!("Could not save online sound download folder: {error}");
                             crate::ui_event_bridge::post_toast(format!(
-                                "Could not save MyInstants download folder: {error}"
+                                "Could not save online sound download folder: {error}"
                             ));
                         }
                     }
@@ -166,13 +301,13 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                     *selected_directory.borrow_mut() = path.clone();
                     update_storage_label(&storage, &path);
                     crate::ui_event_bridge::post_toast(
-                        "MyInstants download folder reset to default".to_string(),
+                        "Online sound download folder reset to default".to_string(),
                     );
                 }
                 Err(error) => {
-                    log::warn!("Could not reset MyInstants download folder: {error}");
+                    log::warn!("Could not reset online sound download folder: {error}");
                     crate::ui_event_bridge::post_toast(format!(
-                        "Could not reset MyInstants download folder: {error}"
+                        "Could not reset online sound download folder: {error}"
                     ));
                 }
             }
@@ -211,7 +346,15 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
     {
         let state = Arc::clone(&state);
         let sound_list = sound_list.clone();
+        let source = source.clone();
+        let options_stack = options_stack.clone();
         let country = country.clone();
+        let tabletop_collection = tabletop_collection.clone();
+        let opengameart_pack = opengameart_pack.clone();
+        let freesound_query = freesound_query.clone();
+        let freesound_token = freesound_token.clone();
+        let freesound_limit = freesound_limit.clone();
+        let ambient_choice = ambient_choice.clone();
         let progress = progress.clone();
         let status = status.clone();
         let start_button = start.clone();
@@ -223,33 +366,55 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
         let active_cancel = Rc::clone(&active_cancel);
 
         start.connect_clicked(move |_| {
-            let selected = country.selected() as usize;
-            let selection = if selected == 0 {
-                myinstants::ALL_ENGLISH_ID
-            } else {
-                myinstants::COUNTRY_CHOICES
-                    .get(selected - 1)
-                    .map(|(code, _)| *code)
-                    .unwrap_or("us")
-            };
-
+            let source_index = source.selected();
+            let source_name = SOURCE_LABELS
+                .get(source_index as usize)
+                .copied()
+                .unwrap_or("Online source")
+                .to_string();
             let output_dir = selected_directory.borrow().clone();
             let tab_id = match sound_list.navigation_context().scope {
                 crate::library_store::LibraryScope::ManualTab(tab_id) => Some(tab_id),
                 crate::library_store::LibraryScope::General
                 | crate::library_store::LibraryScope::Folder { .. } => None,
             };
+
+            let myinstants_selection = {
+                let selected = country.selected() as usize;
+                if selected == 0 {
+                    myinstants::ALL_ENGLISH_ID.to_string()
+                } else {
+                    myinstants::COUNTRY_CHOICES
+                        .get(selected - 1)
+                        .map(|(code, _)| (*code).to_string())
+                        .unwrap_or_else(|| "us".to_string())
+                }
+            };
+            let tabletop_selection = TabletopCollection::from_index(tabletop_collection.selected());
+            let opengameart_selection = online_audio::OPENGAMEART_PACKS
+                .get(opengameart_pack.selected() as usize)
+                .map(|(id, _)| (*id).to_string())
+                .unwrap_or_else(|| "all".to_string());
+            let freesound_search = freesound_query.text().to_string();
+            let freesound_oauth = freesound_token.text().to_string();
+            let freesound_count = freesound_limit.value_as_int().max(1) as usize;
+            let ambient_selection = online_audio::AMBIENT_MIXER_CHOICES
+                .get(ambient_choice.selected() as usize)
+                .map(|(id, _, _)| (*id).to_string())
+                .unwrap_or_else(|| "all".to_string());
+
             let cancelled = Arc::new(AtomicBool::new(false));
             *active_cancel.borrow_mut() = Some(Arc::clone(&cancelled));
 
-            country.set_sensitive(false);
+            source.set_sensitive(false);
+            options_stack.set_sensitive(false);
             start_button.set_sensitive(false);
             cancel_button.set_sensitive(true);
             close_button.set_sensitive(false);
             choose_directory_button.set_sensitive(false);
             use_default_directory_button.set_sensitive(false);
             progress.set_fraction(0.0);
-            status.set_label("Starting MyInstants download…");
+            status.set_label(&format!("Starting {source_name} download…"));
 
             let (progress_tx, progress_rx) = mpsc::channel::<myinstants::DownloadProgress>();
             {
@@ -286,7 +451,8 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
 
             let state_done = Arc::clone(&state);
             let sound_list_done = sound_list.clone();
-            let country_done = country.clone();
+            let source_done = source.clone();
+            let options_stack_done = options_stack.clone();
             let progress_done = progress.clone();
             let status_done = status.clone();
             let start_done = start_button.clone();
@@ -295,62 +461,109 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
             let choose_directory_done = choose_directory_button.clone();
             let use_default_directory_done = use_default_directory_button.clone();
             let active_cancel_done = Rc::clone(&active_cancel);
-            let selection = selection.to_string();
+            let source_name_done = source_name.clone();
 
             let dispatch = commands::dispatch_async_result(
-                "myinstants_download",
-                move || myinstants::download(&selection, &output_dir, progress_tx, cancelled),
+                "online_sound_download",
+                move || -> Result<DownloadReport, String> {
+                    match source_index {
+                        SOURCE_TABLETOP_AUDIO => online_audio::download_tabletop_audio(
+                            tabletop_selection,
+                            &output_dir,
+                            progress_tx,
+                            cancelled,
+                        )
+                        .map_err(|error| error.to_string()),
+                        SOURCE_OPENGAMEART => online_audio::download_opengameart(
+                            &opengameart_selection,
+                            &output_dir,
+                            progress_tx,
+                            cancelled,
+                        )
+                        .map_err(|error| error.to_string()),
+                        SOURCE_FREESOUND => online_audio::download_freesound_originals(
+                            &freesound_search,
+                            &freesound_oauth,
+                            freesound_count,
+                            &output_dir,
+                            progress_tx,
+                            cancelled,
+                        )
+                        .map_err(|error| error.to_string()),
+                        SOURCE_RPG_SOUNDBOARD => online_audio::download_rpg_soundboard_pack(
+                            &output_dir,
+                            progress_tx,
+                            cancelled,
+                        )
+                        .map_err(|error| error.to_string()),
+                        SOURCE_AMBIENT_MIXER => online_audio::download_ambient_mixer(
+                            &ambient_selection,
+                            &output_dir,
+                            progress_tx,
+                            cancelled,
+                        )
+                        .map_err(|error| error.to_string()),
+                        _ => myinstants::download(
+                            &myinstants_selection,
+                            &output_dir,
+                            progress_tx,
+                            cancelled,
+                        )
+                        .map_err(|error| error.to_string()),
+                    }
+                },
                 move |result| {
                     active_cancel_done.borrow_mut().take();
                     cancel_done.set_sensitive(false);
+                    source_done.set_sensitive(true);
+                    options_stack_done.set_sensitive(true);
                     choose_directory_done.set_sensitive(true);
                     use_default_directory_done.set_sensitive(true);
 
                     let report = match result {
                         Ok(report) => report,
                         Err(error) => {
-                            log::warn!("MyInstants download failed: {error}");
-                            status_done.set_label(&format!("MyInstants download failed: {error}"));
-                            country_done.set_sensitive(true);
+                            log::warn!("{source_name_done} download failed: {error}");
+                            status_done
+                                .set_label(&format!("{source_name_done} download failed: {error}"));
                             start_done.set_sensitive(true);
                             close_done.set_sensitive(true);
-                            crate::ui_event_bridge::post_toast(
-                                "MyInstants download failed".to_string(),
-                            );
+                            crate::ui_event_bridge::post_toast(format!(
+                                "{source_name_done} download failed"
+                            ));
                             return;
                         }
                     };
 
                     if report.cancelled {
                         status_done.set_label(
-                            "Download cancelled. Completed files were kept and will be reused next time.",
+                            "Download cancelled. Completed local files were kept and can be reused next time.",
                         );
-                        country_done.set_sensitive(true);
                         start_done.set_sensitive(true);
                         close_done.set_sensitive(true);
                         crate::ui_event_bridge::post_toast(
-                            "MyInstants download cancelled".to_string(),
+                            "Online sound download cancelled".to_string(),
                         );
                         return;
                     }
 
                     if report.paths.is_empty() {
-                        status_done.set_label("No downloadable MyInstants sounds were found.");
-                        country_done.set_sensitive(true);
+                        status_done.set_label(
+                            "Download finished, but no supported audio files were available to import. Any downloaded archives/files were kept locally.",
+                        );
                         start_done.set_sensitive(true);
                         close_done.set_sensitive(true);
                         return;
                     }
 
                     progress_done.set_fraction(1.0);
-                    status_done
-                        .set_label("Download complete. Importing sounds into the soundboard…");
+                    status_done.set_label("Download complete. Importing sounds into the soundboard…");
                     import_downloaded_sounds(
                         report,
                         tab_id,
+                        source_name_done,
                         state_done,
                         sound_list_done,
-                        country_done,
                         status_done,
                         start_done,
                         close_done,
@@ -361,12 +574,13 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
             if let Err(error) = dispatch {
                 active_cancel.borrow_mut().take();
                 cancel_button.set_sensitive(false);
-                country.set_sensitive(true);
+                source.set_sensitive(true);
+                options_stack.set_sensitive(true);
                 start_button.set_sensitive(true);
                 close_button.set_sensitive(true);
                 choose_directory_button.set_sensitive(true);
                 use_default_directory_button.set_sensitive(true);
-                status.set_label(&format!("Could not start MyInstants downloader: {error}"));
+                status.set_label(&format!("Could not start online downloader: {error}"));
             }
         });
     }
@@ -374,9 +588,17 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
     window.present();
 }
 
+fn source_note(text: &str) -> Label {
+    let label = Label::new(Some(text));
+    label.set_wrap(true);
+    label.set_xalign(0.0);
+    label.add_css_class("dim-label");
+    label
+}
+
 fn update_storage_label(label: &Label, path: &Path) {
     label.set_label(&format!(
-        "{}\nInterrupted downloads in this folder can resume without starting over.",
+        "{}\nSource-specific subfolders, archives, license notes, and completed audio stay here.",
         path.display()
     ));
 }
@@ -385,9 +607,9 @@ fn update_storage_label(label: &Label, path: &Path) {
 fn import_downloaded_sounds(
     report: DownloadReport,
     tab_id: Option<String>,
+    source_name: String,
     state: Arc<AppState>,
     sound_list: SoundList,
-    country: DropDown,
     status: Label,
     start: Button,
     close: Button,
@@ -402,9 +624,9 @@ fn import_downloaded_sounds(
 
     let sound_list_done = sound_list;
     let status_done = status.clone();
-    let country_done = country.clone();
     let start_done = start.clone();
     let close_done = close.clone();
+    let source_name_done = source_name.clone();
 
     let dispatch = commands::import_files_to_tab_with_store_async(
         paths,
@@ -413,7 +635,6 @@ fn import_downloaded_sounds(
         state.library.clone(),
         state.loudness_coordinators.clone(),
         move |result| {
-            country_done.set_sensitive(true);
             start_done.set_sensitive(true);
             close_done.set_sensitive(true);
 
@@ -428,18 +649,18 @@ fn import_downloaded_sounds(
                         format!(", {failed} failed")
                     };
                     let message = format!(
-                        "MyInstants complete: {downloaded} downloaded, {reused} reused, {imported} added{failed_note}"
+                        "{source_name_done}: {downloaded} downloaded, {reused} reused, {imported} added{failed_note}"
                     );
                     status_done.set_label(&message);
                     crate::ui_event_bridge::post_toast(message);
                 }
                 Err(error) => {
-                    log::warn!("MyInstants import failed: {error}");
+                    log::warn!("{source_name_done} import failed: {error}");
                     status_done.set_label(&format!(
-                        "Sounds downloaded, but importing them into Linux Soundboard failed: {error}"
+                        "Files were kept locally, but importing them into Linux Soundboard failed: {error}"
                     ));
                     crate::ui_event_bridge::post_toast(
-                        "MyInstants files downloaded; import failed".to_string(),
+                        "Online files downloaded; import failed".to_string(),
                     );
                 }
             }
@@ -447,11 +668,10 @@ fn import_downloaded_sounds(
     );
 
     if let Err(error) = dispatch {
-        country.set_sensitive(true);
         start.set_sensitive(true);
         close.set_sensitive(true);
         status.set_label(&format!(
-            "Sounds downloaded, but the import could not be started: {error}"
+            "Files were kept locally, but the import could not be started: {error}"
         ));
     }
 }
