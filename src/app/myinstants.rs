@@ -65,10 +65,16 @@ pub enum MyInstantsError {
 }
 
 pub fn default_download_directory() -> PathBuf {
-    Config::config_path()
+    let parent = Config::config_path()
         .parent()
         .unwrap_or_else(|| Path::new("."))
-        .join("myinstants")
+        .to_path_buf();
+    let legacy = parent.join("myinstants");
+    if legacy.exists() {
+        legacy
+    } else {
+        parent.join("online-sounds")
+    }
 }
 
 pub fn download_directory(configured: Option<&str>) -> PathBuf {
