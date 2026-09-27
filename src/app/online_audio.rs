@@ -17,6 +17,7 @@ const TABLETOP_HOME: &str = "https://tabletopaudio.com/";
 const TABLETOP_AUDIO_ROOT: &str = "https://sounds.tabletopaudio.com";
 const FREESOUND_SEARCH: &str = "https://freesound.org/apiv2/search/text/";
 const RPG_SOUNDBOARD_HOME: &str = "https://rpgsoundboard.com/";
+const KENNEY_RPG_AUDIO_PAGE: &str = "https://kenney.nl/assets/rpg-audio";
 const TABLETOP_WORKERS: usize = 3;
 const FREESOUND_WORKERS: usize = 4;
 const MAX_FILE_STEM_BYTES: usize = 180;
@@ -62,6 +63,41 @@ pub const AMBIENT_MIXER_CHOICES: &[(&str, &str, &str)] = &[
         "dnd-tavern-noise",
         "D&D Tavern Noise",
         "https://rpg.ambient-mixer.com/d-d-tavern-noise",
+    ),
+    (
+        "traveling-adventurers",
+        "Traveling Adventurers",
+        "https://rpg.ambient-mixer.com/traveling-adventurers",
+    ),
+    (
+        "dungeon-basic-dnd",
+        "Dungeon Basic for D&D",
+        "https://rpg.ambient-mixer.com/dungeon-basic-for-d-d-game",
+    ),
+    (
+        "fantasy-dungeon",
+        "Fantasy Dungeon",
+        "https://rpg.ambient-mixer.com/fantasy-dugeon",
+    ),
+    (
+        "sunless-citadel",
+        "Sunless Citadel Foyer",
+        "https://rpg.ambient-mixer.com/sunless-citadel-foyer",
+    ),
+    (
+        "phandalin-town",
+        "Phandalin Town Ambience",
+        "https://rpg.ambient-mixer.com/d-d-phandalin---town-ambience",
+    ),
+    (
+        "dnd-dark-forest",
+        "D&D Dark Forest",
+        "https://rpg.ambient-mixer.com/dnd-dark-forest",
+    ),
+    (
+        "underdark-dungeon",
+        "Underdark Dungeon",
+        "https://rpg.ambient-mixer.com/underdark-dungeon",
     ),
 ];
 
@@ -531,6 +567,69 @@ Known music credits include Kira Daly (CC BY), Strobotone (CC BY-ND), cymbalBird
     .map_err(OnlineAudioError::WriteMetadata)?;
 
     send_progress(&progress, "RPG Soundboard pack ready", 2, Some(2));
+    Ok(DownloadReport {
+        paths,
+        downloaded: if was_downloaded { 1 } else { 0 },
+        reused: if was_downloaded { 0 } else { 1 },
+        failed: 0,
+        cancelled: false,
+    })
+}
+
+pub fn download_kenney_rpg_audio(
+    output_root: &Path,
+    progress: Sender<DownloadProgress>,
+    cancelled: Arc<AtomicBool>,
+) -> Result<DownloadReport, OnlineAudioError> {
+    ensure_curl()?;
+    ensure_unzip()?;
+
+    let output_dir = output_root.join("Kenney").join("RPG Audio");
+    fs::create_dir_all(&output_dir).map_err(OnlineAudioError::CreateDirectory)?;
+
+    send_progress(&progress, "Finding Kenney RPG Audio pack…", 0, Some(2));
+    let html = fetch_text("Kenney", KENNEY_RPG_AUDIO_PAGE, None)?;
+    let href = find_href_containing(&html, ".zip").ok_or_else(|| OnlineAudioError::Parse {
+        source: "Kenney",
+        message: "the RPG Audio ZIP download link was not found".to_string(),
+    })?;
+    let download_url =
+        absolute_url(KENNEY_RPG_AUDIO_PAGE, &href).ok_or_else(|| OnlineAudioError::Parse {
+            source: "Kenney",
+            message: "the RPG Audio ZIP URL could not be resolved".to_string(),
+        })?;
+
+    let archive_path = output_dir.join("kenney_rpg-audio.zip");
+    let was_downloaded = download_binary("Kenney", &download_url, &archive_path, None)?;
+
+    if cancelled.load(Ordering::Relaxed) {
+        return Ok(DownloadReport {
+            downloaded: if was_downloaded { 1 } else { 0 },
+            reused: if was_downloaded { 0 } else { 1 },
+            cancelled: true,
+            ..DownloadReport::default()
+        });
+    }
+
+    send_progress(&progress, "Extracting Kenney RPG Audio…", 1, Some(2));
+    let extracted_dir = output_dir.join("audio");
+    fs::create_dir_all(&extracted_dir).map_err(OnlineAudioError::CreateDirectory)?;
+    extract_zip(&archive_path, &extracted_dir)?;
+
+    let mut paths = collect_audio_files(&extracted_dir);
+    paths.sort();
+    paths.dedup();
+
+    fs::write(
+        output_dir.join("_Kenney_RPG_Audio_LICENSE.txt"),
+        "Kenney RPG Audio\n\
+Source: https://kenney.nl/assets/rpg-audio\n\
+License: Creative Commons Zero (CC0)\n\
+Contains 50 RPG/fantasy/adventure audio files. Attribution to Kenney or Kenney.nl is optional.\n",
+    )
+    .map_err(OnlineAudioError::WriteMetadata)?;
+
+    send_progress(&progress, "Kenney RPG Audio ready", 2, Some(2));
     Ok(DownloadReport {
         paths,
         downloaded: if was_downloaded { 1 } else { 0 },
@@ -1234,6 +1333,15 @@ mod tests {
         assert_eq!(
             find_download_audio_href(html).as_deref(),
             Some("/download/1234")
+        );
+    }
+
+    #[test]
+    fn kenney_archive_link_is_detected() {
+        let html = r#"<a href="/media/pages/assets/rpg-audio/hash/kenney_rpg-audio.zip">Download</a>"#;
+        assert_eq!(
+            find_href_containing(html, ".zip").as_deref(),
+            Some("/media/pages/assets/rpg-audio/hash/kenney_rpg-audio.zip")
         );
     }
 
