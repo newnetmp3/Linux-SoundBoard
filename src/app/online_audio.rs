@@ -255,7 +255,13 @@ pub fn download_tabletop_audio(
         });
     });
 
-    report_from_counters(paths, downloaded, reused, failed, &cancelled)
+    Ok(report_from_counters(
+        paths,
+        downloaded,
+        reused,
+        failed,
+        &cancelled,
+    ))
 }
 
 pub fn download_opengameart(
@@ -417,7 +423,7 @@ pub fn download_freesound_originals(
                 return;
             }
 
-            let extension = normalized_audio_extension(&sound.file_type).unwrap_or("wav");
+            let extension = normalized_audio_extension(&sound.file_type).unwrap_or("bin");
             let filename = format!(
                 "{}-{}.{}",
                 sanitize_file_stem(&sound.name),
@@ -456,7 +462,13 @@ pub fn download_freesound_originals(
         });
     });
 
-    report_from_counters(paths, downloaded, reused, failed, &cancelled)
+    Ok(report_from_counters(
+        paths,
+        downloaded,
+        reused,
+        failed,
+        &cancelled,
+    ))
 }
 
 pub fn download_rpg_soundboard_pack(
@@ -1153,17 +1165,17 @@ fn report_from_counters(
     reused: AtomicUsize,
     failed: AtomicUsize,
     cancelled: &AtomicBool,
-) -> Result<DownloadReport, OnlineAudioError> {
+) -> DownloadReport {
     let mut paths = paths.into_inner().unwrap_or_default();
     paths.sort();
     paths.dedup();
-    Ok(DownloadReport {
+    DownloadReport {
         paths,
         downloaded: downloaded.load(Ordering::Relaxed),
         reused: reused.load(Ordering::Relaxed),
         failed: failed.load(Ordering::Relaxed),
         cancelled: cancelled.load(Ordering::Relaxed),
-    })
+    }
 }
 
 #[cfg(test)]
