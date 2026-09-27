@@ -44,12 +44,6 @@ impl PublicClipSource {
     }
 }
 
-pub const PUBLIC_CLIP_SOURCES: &[(&str, PublicClipSource)] = &[
-    ("Sound-Buttons.com — popular meme/reaction clips", PublicClipSource::SoundButtonsCom),
-    ("Movie Sound Clips — CC BY-NC sound-effects library", PublicClipSource::MovieSoundClips),
-    ("My-Instants.com — trending meme/reaction clips", PublicClipSource::MyInstantsCom),
-];
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublicClip {
     pub source_name: String,
@@ -188,18 +182,6 @@ pub fn download_selected(
         Some(total),
     );
     Ok(report)
-}
-
-pub fn download_matching(
-    source: PublicClipSource,
-    query: &str,
-    limit: usize,
-    output_root: &Path,
-    progress: Sender<DownloadProgress>,
-    cancelled: Arc<AtomicBool>,
-) -> Result<DownloadReport, PublicClipError> {
-    let clips = browse(source, query, limit, &progress, &cancelled)?;
-    download_selected(source, &clips, output_root, progress, cancelled)
 }
 
 fn browse_sound_buttons(
