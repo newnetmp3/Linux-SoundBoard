@@ -211,6 +211,7 @@ The transport bar runs across the top of the main window.
 | **Freesound** | Downloads the **original uploaded files only** through Freesound APIv2 OAuth2. Preview files are never downloaded. An OAuth2 access token is required and is entered for the current downloader session |
 | **RPG Soundboard** | Downloads the publicly offered Medieval Fantasy `.rpsb` starter pack, keeps the archive, extracts its bundled audio, and imports supported files |
 | **Ambient Mixer** | Downloads curated D&D/fantasy atmospheres when their public page exposes a downloadable audio file and stores source/license notes beside them |
+| **Kenney** | Downloads the 50-file RPG Audio pack directly from Kenney, keeps and extracts the ZIP, and stores the CC0 license note locally |
 
 > **Notes:**
 >
