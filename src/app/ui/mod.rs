@@ -3,6 +3,7 @@ pub mod dialogs;
 mod dnd_import;
 pub mod icons;
 pub mod menu;
+mod myinstants;
 pub mod settings;
 mod settings_folders;
 mod settings_hotkeys;
