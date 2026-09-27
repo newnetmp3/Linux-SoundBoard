@@ -125,15 +125,15 @@ pub enum OnlineAudioError {
     UnzipMissing,
     #[error("failed to create download directory: {0}")]
     CreateDirectory(#[source] io::Error),
-    #[error("{source} request failed for {url}: {message}")]
+    #[error("{provider} request failed for {url}: {message}")]
     Request {
-        source: &'static str,
+        provider: &'static str,
         url: String,
         message: String,
     },
-    #[error("could not parse {source} response: {message}")]
+    #[error("could not parse {provider} response: {message}")]
     Parse {
-        source: &'static str,
+        provider: &'static str,
         message: String,
     },
     #[error("could not extract '{archive}': {message}")]
@@ -424,7 +424,7 @@ pub fn download_freesound_originals(
     let json = fetch_freesound_search(query, page_size, &bearer)?;
     let response: FreesoundSearchResponse =
         serde_json::from_str(&json).map_err(|error| OnlineAudioError::Parse {
-            source: "Freesound",
+            provider: "Freesound",
             message: error.to_string(),
         })?;
 
@@ -526,12 +526,12 @@ pub fn download_rpg_soundboard_pack(
     );
     let html = fetch_text("RPG Soundboard", RPG_SOUNDBOARD_HOME, None)?;
     let href = find_href_containing(&html, ".rpsb").ok_or_else(|| OnlineAudioError::Parse {
-        source: "RPG Soundboard",
+        provider: "RPG Soundboard",
         message: "the free Medieval Fantasy .rpsb download link was not found".to_string(),
     })?;
     let download_url = absolute_url(RPG_SOUNDBOARD_HOME, &href).ok_or_else(|| {
         OnlineAudioError::Parse {
-            source: "RPG Soundboard",
+            provider: "RPG Soundboard",
             message: "the .rpsb download URL could not be resolved".to_string(),
         }
     })?;
@@ -590,12 +590,12 @@ pub fn download_kenney_rpg_audio(
     send_progress(&progress, "Finding Kenney RPG Audio pack…", 0, Some(2));
     let html = fetch_text("Kenney", KENNEY_RPG_AUDIO_PAGE, None)?;
     let href = find_href_containing(&html, ".zip").ok_or_else(|| OnlineAudioError::Parse {
-        source: "Kenney",
+        provider: "Kenney",
         message: "the RPG Audio ZIP download link was not found".to_string(),
     })?;
     let download_url =
         absolute_url(KENNEY_RPG_AUDIO_PAGE, &href).ok_or_else(|| OnlineAudioError::Parse {
-            source: "Kenney",
+            provider: "Kenney",
             message: "the RPG Audio ZIP URL could not be resolved".to_string(),
         })?;
 
@@ -673,12 +673,12 @@ pub fn download_ambient_mixer(
 
         let html = fetch_text("Ambient Mixer", page_url, None)?;
         let href = find_download_audio_href(&html).ok_or_else(|| OnlineAudioError::Parse {
-            source: "Ambient Mixer",
+            provider: "Ambient Mixer",
             message: format!("download link was not found on {page_url}"),
         })?;
         let download_url =
             absolute_url(page_url, &href).ok_or_else(|| OnlineAudioError::Parse {
-                source: "Ambient Mixer",
+                provider: "Ambient Mixer",
                 message: format!("download URL could not be resolved on {page_url}"),
             })?;
 
@@ -873,21 +873,21 @@ fn fetch_freesound_search(
         ])
         .output()
         .map_err(|error| OnlineAudioError::Request {
-            source: "Freesound",
+            provider: "Freesound",
             url: FREESOUND_SEARCH.to_string(),
             message: error.to_string(),
         })?;
 
     if !output.status.success() {
         return Err(OnlineAudioError::Request {
-            source: "Freesound",
+            provider: "Freesound",
             url: FREESOUND_SEARCH.to_string(),
             message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
         });
     }
 
     String::from_utf8(output.stdout).map_err(|error| OnlineAudioError::Parse {
-        source: "Freesound",
+        provider: "Freesound",
         message: format!("response was not valid UTF-8: {error}"),
     })
 }
@@ -936,21 +936,21 @@ fn fetch_text(
     command.arg(url);
 
     let output = command.output().map_err(|error| OnlineAudioError::Request {
-        source,
+        provider: source,
         url: url.to_string(),
         message: error.to_string(),
     })?;
 
     if !output.status.success() {
         return Err(OnlineAudioError::Request {
-            source,
+            provider: source,
             url: url.to_string(),
             message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
         });
     }
 
     String::from_utf8(output.stdout).map_err(|error| OnlineAudioError::Parse {
-        source,
+        provider: source,
         message: format!("response was not valid UTF-8: {error}"),
     })
 }
@@ -1006,7 +1006,7 @@ fn download_binary(
     command.arg("--output").arg(&part_path).arg(url);
 
     let output = command.output().map_err(|error| OnlineAudioError::Request {
-        source,
+        provider: source,
         url: url.to_string(),
         message: error.to_string(),
     })?;
@@ -1017,7 +1017,7 @@ fn download_binary(
     }
     if !output.status.success() {
         return Err(OnlineAudioError::Request {
-            source,
+            provider: source,
             url: url.to_string(),
             message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
         });
@@ -1027,14 +1027,14 @@ fn download_binary(
     if content_type.contains("text/html") {
         let _ = fs::remove_file(&part_path);
         return Err(OnlineAudioError::Request {
-            source,
+            provider: source,
             url: url.to_string(),
             message: "server returned an HTML page instead of an audio/archive file".to_string(),
         });
     }
 
     fs::rename(&part_path, final_path).map_err(|error| OnlineAudioError::Request {
-        source,
+        provider: source,
         url: url.to_string(),
         message: format!("failed to finalize '{}': {error}", final_path.display()),
     })?;
