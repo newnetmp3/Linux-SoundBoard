@@ -14,6 +14,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::config::Config;
+use crate::download_validation::validate_download_as;
 
 const ORIGIN: &str = "https://www.myinstants.com";
 const STABLE_SCROLL_ROUNDS: usize = 8;
@@ -724,6 +725,14 @@ fn download_media(url: &str, final_path: &Path) -> Result<(), MyInstantsError> {
         return Err(MyInstantsError::Request {
             url: url.to_string(),
             message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        });
+    }
+
+    if let Err(message) = validate_download_as(&part_path, final_path) {
+        let _ = fs::remove_file(&part_path);
+        return Err(MyInstantsError::Request {
+            url: url.to_string(),
+            message: format!("download validation failed: {message}"),
         });
     }
 
