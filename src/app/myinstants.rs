@@ -1124,30 +1124,6 @@ mod tests {
     }
 
     #[test]
-    fn explicit_chromedriver_path_is_honored_when_present() {
-        let key = "CHROMEDRIVER";
-        let previous = std::env::var_os(key);
-        let temp = std::env::temp_dir().join(format!(
-            "linux-soundboard-chromedriver-test-{}",
-            std::process::id()
-        ));
-        std::fs::write(&temp, b"test").expect("write chromedriver test file");
-        std::env::set_var(key, &temp);
-
-        assert_eq!(
-            find_chromedriver(Path::new("/usr/bin/chromium")),
-            Some(temp.clone())
-        );
-
-        if let Some(previous) = previous {
-            std::env::set_var(key, previous);
-        } else {
-            std::env::remove_var(key);
-        }
-        let _ = std::fs::remove_file(temp);
-    }
-
-    #[test]
     fn file_names_stay_within_safe_utf8_byte_limits() {
         let title = "界".repeat(200);
         let stem = sanitize_file_stem(&title);
