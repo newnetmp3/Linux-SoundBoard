@@ -64,15 +64,24 @@ pub enum MyInstantsError {
     WorkerPool(String),
 }
 
-pub fn download_directory() -> PathBuf {
+pub fn default_download_directory() -> PathBuf {
     Config::config_path()
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("myinstants")
 }
 
+pub fn download_directory(configured: Option<&str>) -> PathBuf {
+    configured
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(default_download_directory)
+}
+
 pub fn download(
     selection: &str,
+    output_dir: &Path,
     progress: Sender<DownloadProgress>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<DownloadReport, MyInstantsError> {
@@ -80,8 +89,7 @@ pub fn download(
         return Err(MyInstantsError::CurlMissing);
     }
 
-    let output_dir = download_directory();
-    fs::create_dir_all(&output_dir).map_err(MyInstantsError::CreateDirectory)?;
+    fs::create_dir_all(output_dir).map_err(MyInstantsError::CreateDirectory)?;
 
     let countries = selected_countries(selection)?;
     send_progress(&progress, "Discovering MyInstants sounds…", 0, None);
@@ -130,7 +138,7 @@ pub fn download(
                 return;
             }
 
-            let result = resolve_and_download(page_url, &output_dir, &seen_media, &cancelled);
+            let result = resolve_and_download(page_url, output_dir, &seen_media, &cancelled);
             match result {
                 Ok(Some((path, was_downloaded))) => {
                     if was_downloaded {
@@ -583,6 +591,17 @@ fn send_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_download_directory_overrides_default() {
+        let configured = PathBuf::from("/tmp/linux-soundboard-myinstants");
+        assert_eq!(
+            download_directory(Some(configured.to_string_lossy().as_ref())),
+            configured
+        );
+        assert_eq!(download_directory(Some("   ")), default_download_directory());
+        assert_eq!(download_directory(None), default_download_directory());
+    }
 
     #[test]
     fn parses_instant_links_and_deduplicates_them() {

@@ -139,6 +139,17 @@ pub fn set_list_style(style: String, config: Arc<Mutex<Config>>) -> Result<(), C
     })
 }
 
+pub fn set_myinstants_download_directory(
+    directory: Option<String>,
+    config: Arc<Mutex<Config>>,
+) -> Result<(), CommandError> {
+    with_saved_config(&config, |cfg| {
+        cfg.settings.myinstants_download_directory = directory
+            .map(|path| path.trim().to_string())
+            .filter(|path| !path.is_empty());
+    })
+}
+
 pub fn set_mic_passthrough_enabled(
     enabled: bool,
     config: Arc<Mutex<Config>>,

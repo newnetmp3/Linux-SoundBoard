@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
@@ -20,8 +21,8 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
         .title("MyInstants Downloader")
         .transient_for(parent)
         .modal(true)
-        .default_width(540)
-        .default_height(320)
+        .default_width(620)
+        .default_height(400)
         .resizable(false)
         .build();
 
@@ -50,16 +51,36 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
     country.set_hexpand(true);
     content.append(&country);
 
-    let directory = myinstants::download_directory();
-    let storage = Label::new(Some(&format!(
-        "Downloads are kept in {} so interrupted runs can resume without starting over.",
-        directory.display()
+    let configured_directory = state
+        .config
+        .lock()
+        .settings
+        .myinstants_download_directory
+        .clone();
+    let selected_directory = Rc::new(RefCell::new(myinstants::download_directory(
+        configured_directory.as_deref(),
     )));
+
+    let directory_label = Label::new(Some("Download Folder"));
+    directory_label.set_xalign(0.0);
+    directory_label.add_css_class("heading");
+    content.append(&directory_label);
+
+    let directory_row = GtkBox::new(Orientation::Horizontal, 8);
+    let storage = Label::new(None);
+    update_storage_label(&storage, &selected_directory.borrow());
     storage.set_wrap(true);
     storage.set_xalign(0.0);
+    storage.set_hexpand(true);
     storage.add_css_class("dim-label");
     storage.set_selectable(true);
-    content.append(&storage);
+    directory_row.append(&storage);
+
+    let use_default_directory = Button::with_label("Use Default");
+    directory_row.append(&use_default_directory);
+    let choose_directory = Button::with_label("Choose…");
+    directory_row.append(&choose_directory);
+    content.append(&directory_row);
 
     let progress = ProgressBar::new();
     progress.set_show_text(false);
@@ -84,6 +105,79 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
     content.append(&buttons);
 
     window.set_child(Some(&content));
+
+    {
+        let window = window.clone();
+        let state = Arc::clone(&state);
+        let selected_directory = Rc::clone(&selected_directory);
+        let storage = storage.clone();
+        choose_directory.connect_clicked(move |_| {
+            let dialog = gtk4::FileDialog::builder()
+                .title("Select MyInstants Download Folder")
+                .build();
+            let state = Arc::clone(&state);
+            let selected_directory = Rc::clone(&selected_directory);
+            let storage = storage.clone();
+            dialog.select_folder(
+                Some(&window),
+                gtk4::gio::Cancellable::NONE,
+                move |result| {
+                    let Ok(folder) = result else {
+                        return;
+                    };
+                    let Some(path) = folder.path() else {
+                        crate::ui_event_bridge::post_toast(
+                            "The selected folder is not available as a local path".to_string(),
+                        );
+                        return;
+                    };
+                    let configured = path.to_string_lossy().into_owned();
+                    match commands::set_myinstants_download_directory(
+                        Some(configured),
+                        Arc::clone(&state.config),
+                    ) {
+                        Ok(()) => {
+                            *selected_directory.borrow_mut() = path.clone();
+                            update_storage_label(&storage, &path);
+                            crate::ui_event_bridge::post_toast(
+                                "MyInstants download folder updated".to_string(),
+                            );
+                        }
+                        Err(error) => {
+                            log::warn!("Could not save MyInstants download folder: {error}");
+                            crate::ui_event_bridge::post_toast(format!(
+                                "Could not save MyInstants download folder: {error}"
+                            ));
+                        }
+                    }
+                },
+            );
+        });
+    }
+
+    {
+        let state = Arc::clone(&state);
+        let selected_directory = Rc::clone(&selected_directory);
+        let storage = storage.clone();
+        use_default_directory.connect_clicked(move |_| {
+            match commands::set_myinstants_download_directory(None, Arc::clone(&state.config)) {
+                Ok(()) => {
+                    let path = myinstants::default_download_directory();
+                    *selected_directory.borrow_mut() = path.clone();
+                    update_storage_label(&storage, &path);
+                    crate::ui_event_bridge::post_toast(
+                        "MyInstants download folder reset to default".to_string(),
+                    );
+                }
+                Err(error) => {
+                    log::warn!("Could not reset MyInstants download folder: {error}");
+                    crate::ui_event_bridge::post_toast(format!(
+                        "Could not reset MyInstants download folder: {error}"
+                    ));
+                }
+            }
+        });
+    }
 
     let active_cancel: Rc<RefCell<Option<Arc<AtomicBool>>>> = Rc::new(RefCell::new(None));
 
@@ -123,6 +217,9 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
         let start_button = start.clone();
         let cancel_button = cancel.clone();
         let close_button = close.clone();
+        let choose_directory_button = choose_directory.clone();
+        let use_default_directory_button = use_default_directory.clone();
+        let selected_directory = Rc::clone(&selected_directory);
         let active_cancel = Rc::clone(&active_cancel);
 
         start.connect_clicked(move |_| {
@@ -136,6 +233,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                     .unwrap_or("us")
             };
 
+            let output_dir = selected_directory.borrow().clone();
             let tab_id = match sound_list.navigation_context().scope {
                 crate::library_store::LibraryScope::ManualTab(tab_id) => Some(tab_id),
                 crate::library_store::LibraryScope::General
@@ -148,6 +246,8 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
             start_button.set_sensitive(false);
             cancel_button.set_sensitive(true);
             close_button.set_sensitive(false);
+            choose_directory_button.set_sensitive(false);
+            use_default_directory_button.set_sensitive(false);
             progress.set_fraction(0.0);
             status.set_label("Starting MyInstants download…");
 
@@ -192,15 +292,19 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
             let start_done = start_button.clone();
             let cancel_done = cancel_button.clone();
             let close_done = close_button.clone();
+            let choose_directory_done = choose_directory_button.clone();
+            let use_default_directory_done = use_default_directory_button.clone();
             let active_cancel_done = Rc::clone(&active_cancel);
             let selection = selection.to_string();
 
             let dispatch = commands::dispatch_async_result(
                 "myinstants_download",
-                move || myinstants::download(&selection, progress_tx, cancelled),
+                move || myinstants::download(&selection, &output_dir, progress_tx, cancelled),
                 move |result| {
                     active_cancel_done.borrow_mut().take();
                     cancel_done.set_sensitive(false);
+                    choose_directory_done.set_sensitive(true);
+                    use_default_directory_done.set_sensitive(true);
 
                     let report = match result {
                         Ok(report) => report,
@@ -260,12 +364,21 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                 country.set_sensitive(true);
                 start_button.set_sensitive(true);
                 close_button.set_sensitive(true);
+                choose_directory_button.set_sensitive(true);
+                use_default_directory_button.set_sensitive(true);
                 status.set_label(&format!("Could not start MyInstants downloader: {error}"));
             }
         });
     }
 
     window.present();
+}
+
+fn update_storage_label(label: &Label, path: &Path) {
+    label.set_label(&format!(
+        "{}\nInterrupted downloads in this folder can resume without starting over.",
+        path.display()
+    ));
 }
 
 #[allow(clippy::too_many_arguments)]
