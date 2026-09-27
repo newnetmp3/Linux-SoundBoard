@@ -9,6 +9,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use walkdir::WalkDir;
 
+use crate::download_validation::validate_download_as;
 use crate::myinstants::{DownloadProgress, DownloadReport};
 
 const USER_AGENT: &str =
@@ -1026,12 +1027,21 @@ fn download_binary(
     }
 
     let content_type = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
-    if content_type.contains("text/html") {
+    if content_type.contains("text/html") || content_type.contains("application/json") {
         let _ = fs::remove_file(&part_path);
         return Err(OnlineAudioError::Request {
             provider: source,
             url: url.to_string(),
-            message: "server returned an HTML page instead of an audio/archive file".to_string(),
+            message: "server returned a text response instead of an audio/archive file".to_string(),
+        });
+    }
+
+    if let Err(message) = validate_download_as(&part_path, final_path) {
+        let _ = fs::remove_file(&part_path);
+        return Err(OnlineAudioError::Request {
+            provider: source,
+            url: url.to_string(),
+            message: format!("download validation failed: {message}"),
         });
     }
 
