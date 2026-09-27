@@ -16,6 +16,7 @@ use crate::timer_registry::TimerRegistry;
 
 use super::dialogs::DialogHost;
 use super::dnd_import;
+use super::myinstants;
 use super::settings;
 use super::sound_list::SoundList;
 use super::tabs_sidebar::TabsSidebar;
@@ -351,6 +352,19 @@ pub fn build_window(
             });
             settings_overlay.set_visible(true);
             settings_overlay.grab_focus();
+        });
+    }
+
+    {
+        let parent = window.clone();
+        let state = Arc::clone(&state);
+        let sound_list = sound_list.clone();
+        transport.connect_myinstants_requested(move || {
+            myinstants::show_downloader(
+                parent.upcast_ref::<gtk4::Window>(),
+                Arc::clone(&state),
+                sound_list.clone(),
+            );
         });
     }
 
