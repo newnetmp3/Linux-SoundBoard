@@ -977,7 +977,8 @@ impl TabsSidebar {
                     let gesture = GestureClick::new();
                     gesture.set_button(1);
                     gesture.connect_pressed(move |_, _, _, _| {
-                        if let Some(callback) = callback.borrow().as_ref() {
+                        let callback = callback.borrow();
+                        if let Some(callback) = callback.as_ref() {
                             callback(toggle_root.clone(), toggle_relative.clone());
                         }
                     });
@@ -1349,11 +1350,14 @@ impl TabsSidebar {
                         }
 
                         *inner.active_tab_id.lock() = GENERAL_TAB_ID.to_string();
-                        if let Some(callback) = inner.on_tab_selected.borrow().as_ref() {
-                            callback(SidebarSelection {
-                                identity: GENERAL_TAB_ID.to_string(),
-                                scope: crate::library_store::LibraryScope::General,
-                            });
+                        {
+                            let callback = inner.on_tab_selected.borrow();
+                            if let Some(callback) = callback.as_ref() {
+                                callback(SidebarSelection {
+                                    identity: GENERAL_TAB_ID.to_string(),
+                                    scope: crate::library_store::LibraryScope::General,
+                                });
+                            }
                         }
                     });
                 }));
