@@ -169,6 +169,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
     ambient_box.append(&ambient_choice);
     options_stack.add_named(&ambient_box, Some("ambient-mixer"));
 
+    options_stack.set_visible_child_name("myinstants");
     content.append(&options_stack);
 
     {
@@ -186,12 +187,14 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
         });
     }
 
-    let configured_directory = state
-        .config
-        .lock()
-        .settings
-        .myinstants_download_directory
-        .clone();
+    let configured_directory = {
+        let config = state.config.lock();
+        config
+            .settings
+            .online_download_directory
+            .clone()
+            .or_else(|| config.settings.myinstants_download_directory.clone())
+    };
     let selected_directory = Rc::new(RefCell::new(myinstants::download_directory(
         configured_directory.as_deref(),
     )));
@@ -267,7 +270,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                         return;
                     };
                     let configured = path.to_string_lossy().into_owned();
-                    match commands::set_myinstants_download_directory(
+                    match commands::set_online_download_directory(
                         Some(configured),
                         Arc::clone(&state.config),
                     ) {
@@ -295,7 +298,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
         let selected_directory = Rc::clone(&selected_directory);
         let storage = storage.clone();
         use_default_directory.connect_clicked(move |_| {
-            match commands::set_myinstants_download_directory(None, Arc::clone(&state.config)) {
+            match commands::set_online_download_directory(None, Arc::clone(&state.config)) {
                 Ok(()) => {
                     let path = myinstants::default_download_directory();
                     *selected_directory.borrow_mut() = path.clone();
