@@ -777,7 +777,7 @@ fn human_file_name(stem: &str, occurrence: usize) -> String {
 }
 
 fn legacy_hashed_file_name_for(title: &str, media_url: &str) -> String {
-    let safe_title = sanitize_file_stem(title);
+    let safe_title = legacy_sanitize_file_stem(title);
     let digest = Sha256::digest(media_url.as_bytes());
     let short_hash = digest
         .iter()
@@ -787,7 +787,7 @@ fn legacy_hashed_file_name_for(title: &str, media_url: &str) -> String {
     format!("{safe_title}-{short_hash}{AUDIO_EXTENSION}")
 }
 
-fn sanitize_file_stem(value: &str) -> String {
+fn legacy_sanitize_file_stem(value: &str) -> String {
     let mut out = String::new();
     let mut pending_space = false;
     for character in value.chars() {
@@ -808,6 +808,39 @@ fn sanitize_file_stem(value: &str) -> String {
     }
     let out = out.trim();
     if out.is_empty() {
+        "myinstants-sound".to_string()
+    } else {
+        out.to_string()
+    }
+}
+
+fn sanitize_file_stem(value: &str) -> String {
+    let mut out = String::new();
+    let mut pending_space = false;
+
+    for character in value.chars() {
+        let unsafe_for_filename =
+            character == '/' || character == '\\' || character.is_control();
+
+        if unsafe_for_filename || character.is_whitespace() {
+            pending_space = true;
+            continue;
+        }
+
+        let needs_space = pending_space && !out.is_empty();
+        let extra_bytes = character.len_utf8() + if needs_space { 1 } else { 0 };
+        if out.len().saturating_add(extra_bytes) > MAX_FILE_STEM_BYTES {
+            break;
+        }
+        if needs_space {
+            out.push(' ');
+        }
+        pending_space = false;
+        out.push(character);
+    }
+
+    let out = out.trim().trim_end_matches('.');
+    if out.is_empty() || out == "." || out == ".." {
         "myinstants-sound".to_string()
     } else {
         out.to_string()
@@ -855,14 +888,10 @@ fn find_chromium() -> Option<PathBuf> {
 }
 
 fn webdriver_status_ready(endpoint: &str) -> bool {
+    let status_url = format!("{endpoint}/status");
     let output = Command::new("curl")
-        .args([
-            "--silent",
-            "--show-error",
-            "--max-time",
-            "1",
-            &format!("{endpoint}/status"),
-        ])
+        .args(["--silent", "--show-error", "--max-time", "1"])
+        .arg(&status_url)
         .output();
 
     let Ok(output) = output else {
@@ -984,13 +1013,14 @@ mod tests {
 
     #[test]
     fn clean_file_names_use_page_title_without_hash_suffix() {
+        let stem = sanitize_file_stem("\"Wow!\" (anime voice accent)");
         assert_eq!(
-            human_file_name("GET OUT SLOWED", 1),
-            format!("GET OUT SLOWED{AUDIO_EXTENSION}")
+            human_file_name(&stem, 1),
+            format!("\"Wow!\" (anime voice accent){AUDIO_EXTENSION}")
         );
         assert_eq!(
-            human_file_name("GET OUT SLOWED", 2),
-            format!("GET OUT SLOWED (2){AUDIO_EXTENSION}")
+            human_file_name(&stem, 2),
+            format!("\"Wow!\" (anime voice accent) (2){AUDIO_EXTENSION}")
         );
     }
 
