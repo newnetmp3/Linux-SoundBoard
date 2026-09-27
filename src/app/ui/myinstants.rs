@@ -15,6 +15,7 @@ use crate::app_state::AppState;
 use crate::commands;
 use crate::myinstants::{self, DownloadReport};
 use crate::online_audio::{self, TabletopCollection};
+use crate::public_clip_sites::{self, PublicClipSource};
 
 use super::sound_list::SoundList;
 
@@ -25,6 +26,9 @@ const SOURCE_FREESOUND: u32 = 3;
 const SOURCE_RPG_SOUNDBOARD: u32 = 4;
 const SOURCE_AMBIENT_MIXER: u32 = 5;
 const SOURCE_KENNEY: u32 = 6;
+const SOURCE_SOUND_BUTTONS_COM: u32 = 7;
+const SOURCE_MOVIE_SOUND_CLIPS: u32 = 8;
+const SOURCE_MY_INSTANTS_COM: u32 = 9;
 
 const SOURCE_LABELS: &[&str] = &[
     "MyInstants",
@@ -34,6 +38,9 @@ const SOURCE_LABELS: &[&str] = &[
     "RPG Soundboard — free Medieval Fantasy pack",
     "Ambient Mixer — D&D / fantasy atmospheres",
     "Kenney — RPG Audio (50 CC0 sounds)",
+    "Sound-Buttons.com — memes / reactions",
+    "Movie Sound Clips — free sound-effects library",
+    "My-Instants.com — trending memes / reactions",
 ];
 
 pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound_list: SoundList) {
@@ -163,6 +170,26 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
     ));
     options_stack.add_named(&kenney_box, Some("kenney"));
 
+    let public_clips_box = GtkBox::new(Orientation::Vertical, 6);
+    public_clips_box.append(&source_note(
+        "Browse the source's validated public full-audio links. The optional filter is matched against sound titles before downloading. Source metadata is saved beside every audio file.",
+    ));
+    let public_clip_query = Entry::builder()
+        .placeholder_text("Optional title filter, e.g. bruh, laugh, reaction")
+        .hexpand(true)
+        .build();
+    public_clips_box.append(&public_clip_query);
+    let public_limit_row = GtkBox::new(Orientation::Horizontal, 8);
+    let public_limit_label = Label::new(Some("Maximum sounds"));
+    public_limit_label.set_xalign(0.0);
+    public_limit_label.set_hexpand(true);
+    public_limit_row.append(&public_limit_label);
+    let public_limit_adjustment = Adjustment::new(25.0, 1.0, 250.0, 1.0, 25.0, 0.0);
+    let public_clip_limit = SpinButton::new(Some(&public_limit_adjustment), 1.0, 0);
+    public_limit_row.append(&public_clip_limit);
+    public_clips_box.append(&public_limit_row);
+    options_stack.add_named(&public_clips_box, Some("public-clips"));
+
     let ambient_box = GtkBox::new(Orientation::Vertical, 6);
     ambient_box.append(&source_note(
         "Curated D&D/fantasy atmospheres whose pages expose a Download audio action. License/source notes are stored beside the local files.",
@@ -190,6 +217,9 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                 SOURCE_RPG_SOUNDBOARD => "rpg-soundboard",
                 SOURCE_AMBIENT_MIXER => "ambient-mixer",
                 SOURCE_KENNEY => "kenney",
+                SOURCE_SOUND_BUTTONS_COM
+                | SOURCE_MOVIE_SOUND_CLIPS
+                | SOURCE_MY_INSTANTS_COM => "public-clips",
                 _ => "myinstants",
             };
             options_stack.set_visible_child_name(name);
@@ -367,6 +397,8 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
         let freesound_token = freesound_token.clone();
         let freesound_limit = freesound_limit.clone();
         let ambient_choice = ambient_choice.clone();
+        let public_clip_query = public_clip_query.clone();
+        let public_clip_limit = public_clip_limit.clone();
         let progress = progress.clone();
         let status = status.clone();
         let start_button = start.clone();
@@ -414,6 +446,8 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                 .get(ambient_choice.selected() as usize)
                 .map(|(id, _, _)| (*id).to_string())
                 .unwrap_or_else(|| "all".to_string());
+            let public_query = public_clip_query.text().to_string();
+            let public_limit = public_clip_limit.value_as_int().max(1) as usize;
 
             let cancelled = Arc::new(AtomicBool::new(false));
             *active_cancel.borrow_mut() = Some(Arc::clone(&cancelled));
@@ -521,6 +555,24 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                             cancelled,
                         )
                         .map_err(|error| error.to_string()),
+                        SOURCE_SOUND_BUTTONS_COM
+                        | SOURCE_MOVIE_SOUND_CLIPS
+                        | SOURCE_MY_INSTANTS_COM => {
+                            let public_source = match source_index {
+                                SOURCE_SOUND_BUTTONS_COM => PublicClipSource::SoundButtonsCom,
+                                SOURCE_MOVIE_SOUND_CLIPS => PublicClipSource::MovieSoundClips,
+                                _ => PublicClipSource::MyInstantsCom,
+                            };
+                            public_clip_sites::download_matching(
+                                public_source,
+                                &public_query,
+                                public_limit,
+                                &output_dir,
+                                progress_tx,
+                                cancelled,
+                            )
+                            .map_err(|error| error.to_string())
+                        }
                         _ => myinstants::download(
                             &myinstants_selection,
                             &output_dir,
@@ -579,6 +631,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                     import_downloaded_sounds(
                         report,
                         tab_id,
+                        output_dir,
                         source_name_done,
                         state_done,
                         sound_list_done,
@@ -625,6 +678,7 @@ fn update_storage_label(label: &Label, path: &Path) {
 fn import_downloaded_sounds(
     report: DownloadReport,
     tab_id: Option<String>,
+    download_root: std::path::PathBuf,
     source_name: String,
     state: Arc<AppState>,
     sound_list: SoundList,
