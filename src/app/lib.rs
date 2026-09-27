@@ -6,6 +6,7 @@ pub mod config;
 pub mod legacy_migration;
 pub mod library_store;
 pub(crate) mod myinstants;
+pub(crate) mod online_audio;
 
 pub(crate) mod app_meta;
 pub(crate) mod app_state;
