@@ -21,8 +21,8 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
         .title("MyInstants Downloader")
         .transient_for(parent)
         .modal(true)
-        .default_width(540)
-        .default_height(320)
+        .default_width(620)
+        .default_height(400)
         .resizable(false)
         .build();
 
