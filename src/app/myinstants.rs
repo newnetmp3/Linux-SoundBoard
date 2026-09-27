@@ -62,7 +62,7 @@ pub enum MyInstantsError {
     CurlMissing,
     #[error("Chromium is required for MyInstants infinite-scroll discovery")]
     ChromiumMissing,
-    #[error("chromedriver is required for MyInstants infinite-scroll discovery")]
+    #[error("chromedriver was not found for MyInstants infinite-scroll discovery. On Arch, update/install the official Chromium package with 'sudo pacman -Syu chromium' and verify /usr/bin/chromedriver exists. You can also set CHROMEDRIVER to an explicit driver path.")]
     ChromeDriverMissing,
     #[error("failed to start Chromium automation: {0}")]
     BrowserStart(String),
@@ -104,7 +104,7 @@ impl MyInstantsBrowser {
     fn start() -> Result<Self, MyInstantsError> {
         let chromium = find_chromium().ok_or(MyInstantsError::ChromiumMissing)?;
         let chromedriver =
-            which::which("chromedriver").map_err(|_| MyInstantsError::ChromeDriverMissing)?;
+            find_chromedriver(&chromium).ok_or(MyInstantsError::ChromeDriverMissing)?;
 
         let listener = TcpListener::bind("127.0.0.1:0")
             .map_err(|error| MyInstantsError::BrowserStart(error.to_string()))?;
@@ -925,6 +925,32 @@ fn find_chromium() -> Option<PathBuf> {
         .find_map(|binary| which::which(binary).ok())
 }
 
+fn find_chromedriver(chromium: &Path) -> Option<PathBuf> {
+    if let Some(explicit) = std::env::var_os("CHROMEDRIVER") {
+        let path = PathBuf::from(explicit);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+
+    if let Ok(path) = which::which("chromedriver") {
+        return Some(path);
+    }
+
+    let mut candidates = vec![
+        PathBuf::from("/usr/bin/chromedriver"),
+        PathBuf::from("/usr/lib/chromium/chromedriver"),
+        PathBuf::from("/usr/lib64/chromium/chromedriver"),
+        PathBuf::from("/opt/google/chrome/chromedriver"),
+    ];
+
+    if let Some(parent) = chromium.parent() {
+        candidates.push(parent.join("chromedriver"));
+    }
+
+    candidates.into_iter().find(|path| path.is_file())
+}
+
 fn webdriver_status_ready(endpoint: &str) -> bool {
     let status_url = format!("{endpoint}/status");
     let output = Command::new("curl")
@@ -1095,6 +1121,30 @@ mod tests {
         assert!(legacy.starts_with("GET OUT-"));
         assert!(legacy.ends_with(AUDIO_EXTENSION));
         assert_ne!(legacy, format!("GET OUT{AUDIO_EXTENSION}"));
+    }
+
+    #[test]
+    fn explicit_chromedriver_path_is_honored_when_present() {
+        let key = "CHROMEDRIVER";
+        let previous = std::env::var_os(key);
+        let temp = std::env::temp_dir().join(format!(
+            "linux-soundboard-chromedriver-test-{}",
+            std::process::id()
+        ));
+        std::fs::write(&temp, b"test").expect("write chromedriver test file");
+        std::env::set_var(key, &temp);
+
+        assert_eq!(
+            find_chromedriver(Path::new("/usr/bin/chromium")),
+            Some(temp.clone())
+        );
+
+        if let Some(previous) = previous {
+            std::env::set_var(key, previous);
+        } else {
+            std::env::remove_var(key);
+        }
+        let _ = std::fs::remove_file(temp);
     }
 
     #[test]
