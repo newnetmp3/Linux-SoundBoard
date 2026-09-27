@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use gtk4::prelude::*;
 use gtk4::{
-    Adjustment, Align, Box as GtkBox, Button, DropDown, Entry, Label, Orientation, PasswordEntry,
-    ProgressBar, SpinButton, Stack, Window,
+    Adjustment, Align, Box as GtkBox, Button, CheckButton, DropDown, Entry, Label, Orientation,
+    PasswordEntry, ProgressBar, ScrolledWindow, SpinButton, Stack, Window,
 };
 
 use crate::app_state::AppState;
@@ -188,6 +188,24 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
     let public_clip_limit = SpinButton::new(Some(&public_limit_adjustment), 1.0, 0);
     public_limit_row.append(&public_clip_limit);
     public_clips_box.append(&public_limit_row);
+
+    let public_browse = Button::with_label("Browse / Search");
+    public_clips_box.append(&public_browse);
+
+    let public_results_box = GtkBox::new(Orientation::Vertical, 4);
+    let public_results_scroll = ScrolledWindow::builder()
+        .child(&public_results_box)
+        .min_content_height(150)
+        .max_content_height(240)
+        .vexpand(true)
+        .hscrollbar_policy(gtk4::PolicyType::Never)
+        .build();
+    public_clips_box.append(&public_results_scroll);
+
+    let public_results: Rc<
+        RefCell<Vec<(public_clip_sites::PublicClip, Rc<Cell<bool>>)>>,
+    > = Rc::new(RefCell::new(Vec::new()));
+
     options_stack.add_named(&public_clips_box, Some("public-clips"));
 
     let ambient_box = GtkBox::new(Orientation::Vertical, 6);
@@ -209,6 +227,8 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
 
     {
         let options_stack = options_stack.clone();
+        let public_results_box = public_results_box.clone();
+        let public_results = Rc::clone(&public_results);
         source.connect_selected_notify(move |source| {
             let name = match source.selected() {
                 SOURCE_TABLETOP_AUDIO => "tabletop",
@@ -223,6 +243,113 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                 _ => "myinstants",
             };
             options_stack.set_visible_child_name(name);
+            public_results.borrow_mut().clear();
+            while let Some(child) = public_results_box.first_child() {
+                public_results_box.remove(&child);
+            }
+        });
+    }
+
+    {
+        let source = source.clone();
+        let query = public_clip_query.clone();
+        let limit = public_clip_limit.clone();
+        let results_box = public_results_box.clone();
+        let results_state = Rc::clone(&public_results);
+        let window = window.clone();
+        public_browse.connect_clicked(move |button| {
+            let public_source = match source.selected() {
+                SOURCE_SOUND_BUTTONS_COM => PublicClipSource::SoundButtonsCom,
+                SOURCE_MOVIE_SOUND_CLIPS => PublicClipSource::MovieSoundClips,
+                SOURCE_MY_INSTANTS_COM => PublicClipSource::MyInstantsCom,
+                _ => return,
+            };
+            button.set_sensitive(false);
+            button.set_label("Browsing…");
+            let query = query.text().to_string();
+            let limit = limit.value_as_int().max(1) as usize;
+            let (progress_tx, _progress_rx) = mpsc::channel::<myinstants::DownloadProgress>();
+            let cancelled = AtomicBool::new(false);
+            let button_done = button.clone();
+            let results_box_done = results_box.clone();
+            let results_state_done = Rc::clone(&results_state);
+            let window_done = window.clone();
+
+            let _ = commands::dispatch_async_result(
+                "browse_public_sound_source",
+                move || public_clip_sites::browse(
+                    public_source,
+                    &query,
+                    limit,
+                    &progress_tx,
+                    &cancelled,
+                ),
+                move |result| {
+                    button_done.set_sensitive(true);
+                    button_done.set_label("Browse / Search");
+                    while let Some(child) = results_box_done.first_child() {
+                        results_box_done.remove(&child);
+                    }
+                    results_state_done.borrow_mut().clear();
+
+                    match result {
+                        Ok(clips) => {
+                            for clip in clips {
+                                let selected = Rc::new(Cell::new(true));
+                                let row = GtkBox::new(Orientation::Horizontal, 6);
+                                let check = CheckButton::builder()
+                                    .label(&clip.title)
+                                    .active(true)
+                                    .hexpand(true)
+                                    .halign(Align::Fill)
+                                    .build();
+                                {
+                                    let selected = Rc::clone(&selected);
+                                    check.connect_toggled(move |check| {
+                                        selected.set(check.is_active());
+                                    });
+                                }
+                                row.append(&check);
+
+                                let preview = Button::with_label("Preview");
+                                {
+                                    let media_url = clip
+                                        .preview_url
+                                        .clone()
+                                        .unwrap_or_else(|| clip.media_url.clone());
+                                    let window = window_done.clone();
+                                    preview.connect_clicked(move |_| {
+                                        gtk4::UriLauncher::new(&media_url).launch(
+                                            Some(&window),
+                                            gtk4::gio::Cancellable::NONE,
+                                            |result| {
+                                                if let Err(error) = result {
+                                                    log::warn!(
+                                                        "Could not open sound preview: {error}"
+                                                    );
+                                                }
+                                            },
+                                        );
+                                    });
+                                }
+                                row.append(&preview);
+                                results_box_done.append(&row);
+                                results_state_done
+                                    .borrow_mut()
+                                    .push((clip, selected));
+                            }
+                        }
+                        Err(error) => {
+                            let label = Label::new(Some(&format!(
+                                "Browse failed: {error}"
+                            )));
+                            label.set_wrap(true);
+                            label.set_xalign(0.0);
+                            results_box_done.append(&label);
+                        }
+                    }
+                },
+            );
         });
     }
 
