@@ -10,6 +10,7 @@ url="https://github.com/germanua/Linux-SoundBoard"
 license=('LicenseRef-PolyForm-Noncommercial-1.0.0')
 depends=(
   'curl'
+  'unzip'
   'gtk4'
   'libadwaita'
   'libpulse'

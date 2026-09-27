@@ -675,6 +675,8 @@ pub struct Settings {
     #[serde(default)]
     pub mpris_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub online_download_directory: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub myinstants_download_directory: Option<String>,
 }
 
@@ -769,6 +771,11 @@ impl Settings {
         self.auto_gain_target_lufs = self.auto_gain_target_lufs.clamp(-24.0, 0.0);
         self.loudness_boost_db = normalize_loudness_boost_db(self.loudness_boost_db);
         self.allow_multiple_playbacks = false;
+        if self.online_download_directory.is_none() {
+            self.online_download_directory = self.myinstants_download_directory.take();
+        } else {
+            self.myinstants_download_directory = None;
+        }
     }
 }
 
@@ -804,6 +811,7 @@ impl Default for Settings {
             tray_enabled: default_tray_setting(),
             close_to_tray: default_tray_setting(),
             mpris_enabled: false,
+            online_download_directory: None,
             myinstants_download_directory: None,
         }
     }
@@ -839,5 +847,34 @@ mod tests {
     #[test]
     fn settings_default_disables_multiple_playbacks() {
         assert!(!Settings::default().allow_multiple_playbacks);
+    }
+
+    #[test]
+    fn legacy_myinstants_folder_migrates_to_online_download_folder() {
+        let mut settings = Settings::default();
+        settings.myinstants_download_directory = Some("/tmp/old-myinstants".to_string());
+
+        settings.normalize_for_persistence();
+
+        assert_eq!(
+            settings.online_download_directory.as_deref(),
+            Some("/tmp/old-myinstants")
+        );
+        assert!(settings.myinstants_download_directory.is_none());
+    }
+
+    #[test]
+    fn generic_online_folder_wins_over_legacy_folder() {
+        let mut settings = Settings::default();
+        settings.online_download_directory = Some("/tmp/online-sounds".to_string());
+        settings.myinstants_download_directory = Some("/tmp/old-myinstants".to_string());
+
+        settings.normalize_for_persistence();
+
+        assert_eq!(
+            settings.online_download_directory.as_deref(),
+            Some("/tmp/online-sounds")
+        );
+        assert!(settings.myinstants_download_directory.is_none());
     }
 }
