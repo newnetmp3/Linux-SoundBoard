@@ -509,6 +509,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
             let active_cancel_done = Rc::clone(&active_cancel);
             let source_name_done = source_name.clone();
 
+            let download_root_for_import = output_dir.clone();
             let dispatch = commands::dispatch_async_result(
                 "online_sound_download",
                 move || -> Result<DownloadReport, String> {
@@ -631,7 +632,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                     import_downloaded_sounds(
                         report,
                         tab_id,
-                        output_dir,
+                        download_root_for_import,
                         source_name_done,
                         state_done,
                         sound_list_done,
@@ -698,6 +699,7 @@ fn import_downloaded_sounds(
     let worker_config = Arc::clone(&state.config);
     let worker_library = state.library.clone();
     let worker_coords = state.loudness_coordinators.clone();
+    let worker_projection = state.hotkey_projection.clone();
 
     let sound_list_done = sound_list;
     let status_done = status.clone();
@@ -717,19 +719,37 @@ fn import_downloaded_sounds(
             let imported = commands::import_files_to_tab_with_store(
                 paths,
                 tab_id,
-                worker_config,
-                worker_library,
+                Arc::clone(&worker_config),
+                worker_library.clone(),
                 &worker_coords,
             )?;
-            Ok::<(usize, usize), commands::CommandError>((migrated, imported))
+
+            commands::add_sound_folder_with_store(
+                download_root.to_string_lossy().into_owned(),
+                worker_library.clone(),
+            )?;
+            let scan_cancelled = AtomicBool::new(false);
+            let refreshed = commands::refresh_sounds_with_store_cancellable(
+                worker_config,
+                worker_library,
+                worker_projection,
+                &worker_coords,
+                &scan_cancelled,
+            )?;
+
+            Ok::<(usize, usize, usize), commands::CommandError>((
+                migrated,
+                imported,
+                refreshed.refreshed,
+            ))
         },
         move |result| {
             start_done.set_sensitive(true);
             close_done.set_sensitive(true);
 
             match result {
-                Ok((migrated, imported)) => {
-                    if migrated > 0 || imported > 0 {
+                Ok((migrated, imported, refreshed)) => {
+                    if migrated > 0 || imported > 0 || refreshed > 0 {
                         sound_list_done.refresh_from_state();
                     }
                     let migrated_note = if migrated == 0 {
@@ -743,7 +763,7 @@ fn import_downloaded_sounds(
                         format!(", {failed} failed")
                     };
                     let message = format!(
-                        "{source_name_done}: {downloaded} downloaded, {reused} reused, {imported} added{migrated_note}{failed_note}"
+                        "{source_name_done}: {downloaded} downloaded, {reused} reused, {imported} added, source folders refreshed{migrated_note}{failed_note}"
                     );
                     status_done.set_label(&message);
                     crate::ui_event_bridge::post_toast(message);
