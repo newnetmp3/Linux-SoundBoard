@@ -277,7 +277,7 @@ Removing a sound from the library does not delete the original audio file.
 <summary><strong>Arch Linux</strong></summary>
 
 ```bash
-sudo pacman -S cargo rust pkgconf clang gtk4 libadwaita libpulse opus libx11 libxi pipewire pipewire-pulse wireplumber curl unzip chromium
+sudo pacman -S cargo rust pkgconf clang gtk4 libadwaita libpulse opus libx11 libxi pipewire pipewire-pulse wireplumber curl unzip
 ```
 
 </details>
