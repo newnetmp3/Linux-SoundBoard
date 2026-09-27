@@ -197,7 +197,7 @@ service and virtual microphone can stay running.
   `library.sqlite3`
 - **Large libraries:** Loaded in bounded pages
 - **Drag and drop:** Add files or folders from a file manager
-- **MyInstants downloader:** Download country indexes or all supported English-speaking indexes directly into the active tab, with resume and duplicate protection
+- **MyInstants downloader:** Download country indexes or all supported English-speaking indexes directly into the active tab, choose and remember the download folder, and resume interrupted downloads with duplicate protection
 - **Search:** Filter the visible sound list
 - **Hotkeys:** Per-sound bindings and shared playback controls
 
