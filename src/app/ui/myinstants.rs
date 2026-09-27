@@ -5,7 +5,9 @@ use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
 use gtk4::prelude::*;
-use gtk4::{Align, Box as GtkBox, Button, DropDown, Label, Orientation, ProgressBar, Window};
+use gtk4::{
+    Align, Box as GtkBox, Button, DropDown, Label, Orientation, ProgressBar, Window,
+};
 
 use crate::app_meta::GENERAL_TAB_ID;
 use crate::app_state::AppState;
