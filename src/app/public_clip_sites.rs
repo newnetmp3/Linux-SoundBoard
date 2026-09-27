@@ -301,19 +301,37 @@ fn browse_movie_sound_clips(
             if cancelled.load(Ordering::Relaxed) || clips.len() >= limit {
                 break;
             }
-            if !url_has_audio_extension(&anchor.href) || anchor.text.trim().is_empty() {
+
+            let href_lower = anchor
+                .href
+                .split('?')
+                .next()
+                .unwrap_or(&anchor.href)
+                .to_ascii_lowercase();
+            if !href_lower.ends_with(".wav") || anchor.text.trim().is_empty() {
                 continue;
             }
+
+            let title = anchor
+                .text
+                .strip_suffix(" wav")
+                .unwrap_or(&anchor.text)
+                .trim()
+                .to_string();
+            if title.is_empty() || !matches_query(&title, query) {
+                continue;
+            }
+
             let media_url =
                 absolute_url(&page_url, &anchor.href).unwrap_or_else(|| anchor.href.clone());
-            if !seen.insert(media_url.clone()) || !matches_query(&anchor.text, query) {
+            if !seen.insert(media_url.clone()) {
                 continue;
             }
 
             clips.push(PublicClip {
                 source_name: "Movie Sound Clips".to_string(),
                 source_url: page_url.clone(),
-                title: anchor.text.clone(),
+                title,
                 creator: Some("Moviesoundclips.net".to_string()),
                 media_url: media_url.clone(),
                 preview_url: Some(media_url),
@@ -387,9 +405,12 @@ fn browse_my_instants_com(
         let anchors = parse_anchors(&detail_html);
         let media = anchors.iter().find_map(|anchor| {
             let lower = anchor.href.to_ascii_lowercase();
-            if (lower.contains("soundboard.cloud") || lower.contains("/media/"))
-                && url_has_audio_extension(&lower)
-            {
+            let soundboard_download = lower.contains("play.soundboard.cloud")
+                && lower.contains("/audio")
+                && lower.contains("download=true");
+            let public_media_file =
+                lower.contains("/media/") && url_has_audio_extension(&lower);
+            if soundboard_download || public_media_file {
                 absolute_url(&detail_url, &anchor.href)
             } else {
                 None
@@ -814,6 +835,37 @@ mod tests {
         assert_eq!(anchors.len(), 2);
         assert_eq!(anchors[0].text, "Monkey sounds");
         assert_eq!(anchors[1].href, "/download/57e2febe.mp3");
+    }
+
+    #[test]
+    fn movie_sound_clips_prefers_titled_wav_links() {
+        let html = r#"
+            <a href="/effects/people/babycry-1.wav">7 month old Baby Crying wav</a>
+            <a href="/effects/people/babycry-1.mp3">mp3</a>
+            <a href="/effects/people/babycry-1.flac">flac</a>
+        "#;
+        let anchors = parse_anchors(html);
+        let wav = anchors
+            .iter()
+            .find(|anchor| anchor.href.ends_with(".wav"))
+            .expect("wav link");
+        assert_eq!(
+            wav.text.strip_suffix(" wav"),
+            Some("7 month old Baby Crying")
+        );
+    }
+
+    #[test]
+    fn my_instants_soundboard_cloud_download_does_not_need_extension() {
+        let url =
+            "https://play.soundboard.cloud/api/my-instants.com/sounds/8313/audio?download=true";
+        let lower = url.to_ascii_lowercase();
+        assert!(
+            lower.contains("play.soundboard.cloud")
+                && lower.contains("/audio")
+                && lower.contains("download=true")
+        );
+        assert_eq!(extension_from_url(url), None);
     }
 
     #[test]
