@@ -16,6 +16,7 @@ use crate::commands;
 use crate::myinstants::{self, DownloadReport};
 use crate::online_audio::{self, TabletopCollection};
 use crate::public_clip_sites::{self, PublicClipSource};
+use crate::source_registry;
 
 use super::sound_list::SoundList;
 
@@ -59,11 +60,22 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
     content.set_margin_start(18);
     content.set_margin_end(18);
 
-    let intro = Label::new(Some(
-        "Download local copies from online sound libraries and import supported audio directly into the selected soundboard tab.",
-    ));
+    let working_sources = source_registry::working_sources().collect::<Vec<_>>();
+    let intro = Label::new(Some(&format!(
+        "Download local copies from tested online sound libraries and import supported audio directly into the selected soundboard tab. {} working integrations are active from {} tracked candidate sites.",
+        working_sources.len(),
+        source_registry::SOURCES.len()
+    )));
     intro.set_wrap(true);
     intro.set_xalign(0.0);
+    let registry_tooltip = working_sources
+        .iter()
+        .map(|source| format!("#{} {} — {}", source.id, source.name, source.url))
+        .collect::<Vec<_>>()
+        .join("\n");
+    intro.set_tooltip_text(Some(&format!(
+        "Currently tested integrations from the candidate registry:\n{registry_tooltip}"
+    )));
     content.append(&intro);
 
     let source_label = Label::new(Some("Source"));
