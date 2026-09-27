@@ -969,7 +969,15 @@ fn download_binary(
         .map(|metadata| metadata.len() > 0)
         .unwrap_or(false)
     {
-        return Ok(false);
+        if validate_download_as(final_path, final_path).is_ok() {
+            return Ok(false);
+        }
+        log::warn!(
+            "Replacing invalid cached {} download '{}'",
+            source,
+            final_path.display()
+        );
+        let _ = fs::remove_file(final_path);
     }
     if let Some(parent) = final_path.parent() {
         fs::create_dir_all(parent).map_err(OnlineAudioError::CreateDirectory)?;
