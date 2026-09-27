@@ -1946,7 +1946,6 @@ mod tests {
         assert!(DEFAULT_LOG_FILTER.contains("symphonia_bundle_mp3::demuxer=error"));
     }
 
-    use super::*;
     use crate::config::Sound;
     use std::cell::{Cell, RefCell};
     use std::fs;
