@@ -5,6 +5,10 @@ use std::path::Path;
 const PROBE_BYTES: usize = 16 * 1024;
 
 pub fn validate_download(path: &Path) -> Result<(), String> {
+    validate_download_as(path, path)
+}
+
+pub fn validate_download_as(path: &Path, expected_path: &Path) -> Result<(), String> {
     let metadata = path
         .metadata()
         .map_err(|error| format!("could not stat downloaded file: {error}"))?;
@@ -12,7 +16,7 @@ pub fn validate_download(path: &Path) -> Result<(), String> {
         return Err("downloaded file is empty".to_string());
     }
 
-    let extension = path
+    let extension = expected_path
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or_default()
