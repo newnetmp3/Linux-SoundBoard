@@ -197,7 +197,7 @@ service and virtual microphone can stay running.
   `library.sqlite3`
 - **Large libraries:** Loaded in bounded pages
 - **Drag and drop:** Add files or folders from a file manager
-- **Online sound downloader:** Keep local copies from MyInstants, Tabletop Audio, curated OpenGameArt RPG packs, Freesound original files (OAuth2 only; never previews), RPG Soundboard's free Medieval Fantasy pack, curated Ambient Mixer D&D/fantasy atmospheres, and Kenney's CC0 RPG Audio pack; choose and remember a main download folder with one subfolder per source, preserve license/credit notes, resume supported downloads, and import compatible audio into the active tab
+- **Online sound downloader:** Keep local copies from MyInstants, Tabletop Audio, curated OpenGameArt RPG packs, Freesound original files (OAuth2 only; never previews), RPG Soundboard's free Medieval Fantasy pack, curated Ambient Mixer D&D/fantasy atmospheres, and Kenney's CC0 RPG Audio pack; MyInstants uses a real Chromium-driven infinite scroll and saves files under their visible sound names; choose and remember a main download folder with one subfolder per source, preserve license/credit notes, resume supported downloads, and import compatible audio into the active tab
 - **Search:** Filter the visible sound list
 - **Hotkeys:** Per-sound bindings and shared playback controls
 
@@ -277,7 +277,7 @@ Removing a sound from the library does not delete the original audio file.
 <summary><strong>Arch Linux</strong></summary>
 
 ```bash
-sudo pacman -S cargo rust pkgconf clang gtk4 libadwaita libpulse opus libx11 libxi pipewire pipewire-pulse wireplumber curl unzip
+sudo pacman -S cargo rust pkgconf clang gtk4 libadwaita libpulse opus libx11 libxi pipewire pipewire-pulse wireplumber curl unzip chromium
 ```
 
 </details>
