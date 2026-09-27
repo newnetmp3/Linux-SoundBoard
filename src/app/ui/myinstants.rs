@@ -76,7 +76,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
 
     let myinstants_box = GtkBox::new(Orientation::Vertical, 6);
     let myinstants_note = source_note(
-        "Country index downloads. Existing files are reused and interrupted downloads resume.",
+        "Country index downloads use a headless Chromium session to perform MyInstants' real infinite scroll. Existing files are reused, interrupted downloads resume, and filenames follow the visible sound name. Requires Chromium + chromedriver.",
     );
     myinstants_box.append(&myinstants_note);
     let mut country_labels = vec!["All English-speaking indexes"];
@@ -634,11 +634,16 @@ fn import_downloaded_sounds(
 ) {
     let DownloadReport {
         paths,
+        path_migrations,
         downloaded,
         reused,
         failed,
         cancelled: _,
     } = report;
+
+    let worker_config = Arc::clone(&state.config);
+    let worker_library = state.library.clone();
+    let worker_coords = state.loudness_coordinators.clone();
 
     let sound_list_done = sound_list;
     let status_done = status.clone();
@@ -646,28 +651,45 @@ fn import_downloaded_sounds(
     let close_done = close.clone();
     let source_name_done = source_name.clone();
 
-    let dispatch = commands::import_files_to_tab_with_store_async(
-        paths,
-        tab_id,
-        Arc::clone(&state.config),
-        state.library.clone(),
-        state.loudness_coordinators.clone(),
+    let dispatch = commands::dispatch_async_result(
+        "online_sound_import",
+        move || {
+            let migrated = commands::migrate_sound_paths_with_store(
+                path_migrations,
+                Arc::clone(&worker_config),
+                worker_library.clone(),
+                &worker_coords,
+            )?;
+            let imported = commands::import_files_to_tab_with_store(
+                paths,
+                tab_id,
+                worker_config,
+                worker_library,
+                &worker_coords,
+            )?;
+            Ok::<(usize, usize), commands::CommandError>((migrated, imported))
+        },
         move |result| {
             start_done.set_sensitive(true);
             close_done.set_sensitive(true);
 
             match result {
-                Ok(imported) => {
-                    if imported > 0 {
+                Ok((migrated, imported)) => {
+                    if migrated > 0 || imported > 0 {
                         sound_list_done.refresh_from_state();
                     }
+                    let migrated_note = if migrated == 0 {
+                        String::new()
+                    } else {
+                        format!(", {migrated} renamed")
+                    };
                     let failed_note = if failed == 0 {
                         String::new()
                     } else {
                         format!(", {failed} failed")
                     };
                     let message = format!(
-                        "{source_name_done}: {downloaded} downloaded, {reused} reused, {imported} added{failed_note}"
+                        "{source_name_done}: {downloaded} downloaded, {reused} reused, {imported} added{migrated_note}{failed_note}"
                     );
                     status_done.set_label(&message);
                     crate::ui_event_bridge::post_toast(message);

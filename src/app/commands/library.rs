@@ -668,6 +668,69 @@ where
     )
 }
 
+pub fn migrate_sound_paths_with_store(
+    migrations: Vec<(String, String)>,
+    config: Arc<Mutex<Config>>,
+    library: LibraryStore,
+    coords: &LoudnessCoordinators,
+) -> Result<usize, CommandError> {
+    let mut updated = 0_usize;
+
+    for (old_path, new_path) in migrations {
+        if old_path == new_path || !Path::new(&new_path).is_file() {
+            continue;
+        }
+
+        let Some(mut sound) = library
+            .sound_by_path(&old_path)
+            .recv()
+            .map_err(|error| CommandError::Library(error.to_string()))?
+        else {
+            continue;
+        };
+
+        if library
+            .sound_by_path(&new_path)
+            .recv()
+            .map_err(|error| CommandError::Library(error.to_string()))?
+            .is_some()
+        {
+            log::warn!(
+                "Skipping downloaded sound path migration because the destination is already in the library: '{}' -> '{}'",
+                old_path,
+                new_path
+            );
+            continue;
+        }
+
+        sound.path = new_path.clone();
+        sound.name = Path::new(&new_path)
+            .file_stem()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| sound.name.clone());
+        sound.source_path = None;
+        sound.duration_ms = probe_duration_ms(&sound.path);
+        sound.loudness_source_fingerprint =
+            compute_sound_source_fingerprint(&sound.path, sound.duration_ms);
+        sound.loudness_lufs = None;
+        sound.loudness_true_peak_dbtp = None;
+        sound.loudness_analysis_state = LoudnessAnalysisState::Pending;
+        sound.loudness_confidence = None;
+
+        library
+            .update_sound(sound)
+            .recv()
+            .map_err(|error| CommandError::Library(error.to_string()))?;
+        updated = updated.saturating_add(1);
+    }
+
+    if updated > 0 {
+        maybe_schedule_missing_loudness_backfill_with_store(&config, &library, coords);
+    }
+
+    Ok(updated)
+}
+
 pub fn update_sound_source_with_store(
     id: String,
     new_path: String,

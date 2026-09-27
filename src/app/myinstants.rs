@@ -1,19 +1,26 @@
 use rayon::prelude::*;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use crate::config::Config;
 
 const ORIGIN: &str = "https://www.myinstants.com";
-const MAX_PAGES: usize = 1_000;
-const STABLE_PAGE_LIMIT: usize = 8;
+const STABLE_SCROLL_ROUNDS: usize = 8;
+const MAX_SCROLL_ROUNDS: usize = 1_000;
+const SCROLL_SETTLE_MS: u64 = 850;
+const SCROLL_NUDGE_MS: u64 = 150;
+const BROWSER_START_TIMEOUT_SECS: u64 = 12;
 const DOWNLOAD_WORKERS: usize = 8;
 const MAX_FILE_STEM_BYTES: usize = 180;
 const AUDIO_EXTENSION: &str = concat!(".", "mp3");
@@ -42,6 +49,7 @@ pub struct DownloadProgress {
 #[derive(Debug, Default)]
 pub struct DownloadReport {
     pub paths: Vec<String>,
+    pub path_migrations: Vec<(String, String)>,
     pub downloaded: usize,
     pub reused: usize,
     pub failed: usize,
@@ -52,6 +60,14 @@ pub struct DownloadReport {
 pub enum MyInstantsError {
     #[error("curl is required to download sounds from MyInstants")]
     CurlMissing,
+    #[error("Chromium is required for MyInstants infinite-scroll discovery")]
+    ChromiumMissing,
+    #[error("chromedriver is required for MyInstants infinite-scroll discovery")]
+    ChromeDriverMissing,
+    #[error("failed to start Chromium automation: {0}")]
+    BrowserStart(String),
+    #[error("Chromium automation failed: {0}")]
+    BrowserProtocol(String),
     #[error("failed to create MyInstants download directory: {0}")]
     CreateDirectory(#[source] io::Error),
     #[error("failed to write MyInstants source manifest: {0}")]
@@ -62,6 +78,244 @@ pub enum MyInstantsError {
     InvalidCountry(String),
     #[error("failed to create MyInstants worker pool: {0}")]
     WorkerPool(String),
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedSound {
+    page_url: String,
+    media_url: String,
+    title: String,
+}
+
+#[derive(Debug, Clone)]
+struct DownloadJob {
+    media_url: String,
+    final_path: PathBuf,
+    legacy_path: PathBuf,
+}
+
+struct MyInstantsBrowser {
+    child: Child,
+    endpoint: String,
+    session_id: String,
+}
+
+impl MyInstantsBrowser {
+    fn start() -> Result<Self, MyInstantsError> {
+        let chromium = find_chromium().ok_or(MyInstantsError::ChromiumMissing)?;
+        let chromedriver =
+            which::which("chromedriver").map_err(|_| MyInstantsError::ChromeDriverMissing)?;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .map_err(|error| MyInstantsError::BrowserStart(error.to_string()))?;
+        let port = listener
+            .local_addr()
+            .map_err(|error| MyInstantsError::BrowserStart(error.to_string()))?
+            .port();
+        drop(listener);
+
+        let mut child = Command::new(chromedriver)
+            .arg(format!("--port={port}"))
+            .arg("--log-level=SEVERE")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| MyInstantsError::BrowserStart(error.to_string()))?;
+
+        let endpoint = format!("http://127.0.0.1:{port}");
+        let deadline = Instant::now() + Duration::from_secs(BROWSER_START_TIMEOUT_SECS);
+        loop {
+            if webdriver_status_ready(&endpoint) {
+                break;
+            }
+            if let Ok(Some(status)) = child.try_wait() {
+                return Err(MyInstantsError::BrowserStart(format!(
+                    "chromedriver exited before becoming ready: {status}"
+                )));
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(MyInstantsError::BrowserStart(
+                    "timed out waiting for chromedriver".to_string(),
+                ));
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+
+        let response = webdriver_request(
+            "POST",
+            &format!("{endpoint}/session"),
+            Some(json!({
+                "capabilities": {
+                    "alwaysMatch": {
+                        "browserName": "chrome",
+                        "goog:chromeOptions": {
+                            "binary": chromium.to_string_lossy(),
+                            "args": [
+                                "--headless=new",
+                                "--disable-gpu",
+                                "--disable-dev-shm-usage",
+                                "--no-first-run",
+                                "--no-default-browser-check",
+                                "--window-size=1280,900"
+                            ]
+                        }
+                    }
+                }
+            })),
+        )
+        .map_err(|error| {
+            let _ = child.kill();
+            let _ = child.wait();
+            error
+        })?;
+
+        let session_id = response
+            .pointer("/value/sessionId")
+            .or_else(|| response.get("sessionId"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                let _ = child.kill();
+                let _ = child.wait();
+                MyInstantsError::BrowserProtocol(format!(
+                    "chromedriver did not return a session id: {response}"
+                ))
+            })?
+            .to_string();
+
+        Ok(Self {
+            child,
+            endpoint,
+            session_id,
+        })
+    }
+
+    fn navigate(&self, url: &str) -> Result<(), MyInstantsError> {
+        webdriver_request(
+            "POST",
+            &self.session_url("url"),
+            Some(json!({ "url": url })),
+        )?;
+        Ok(())
+    }
+
+    fn execute(&self, script: &str) -> Result<Value, MyInstantsError> {
+        let response = webdriver_request(
+            "POST",
+            &self.session_url("execute/sync"),
+            Some(json!({
+                "script": script,
+                "args": []
+            })),
+        )?;
+        Ok(response.get("value").cloned().unwrap_or(Value::Null))
+    }
+
+    fn collect_infinite_scroll_links(
+        &self,
+        country: &str,
+        progress: &Sender<DownloadProgress>,
+        cancelled: &AtomicBool,
+    ) -> Result<Vec<String>, MyInstantsError> {
+        let url = format!("{ORIGIN}/en/index/{country}/");
+        self.navigate(&url)?;
+        thread::sleep(Duration::from_millis(SCROLL_SETTLE_MS));
+
+        let mut found = HashSet::<String>::new();
+        let mut stable_rounds = 0usize;
+        let mut last_count = 0usize;
+        let mut last_height = 0u64;
+
+        for round in 1..=MAX_SCROLL_ROUNDS {
+            if cancelled.load(Ordering::Relaxed) {
+                break;
+            }
+
+            self.execute(
+                "window.scrollTo(0, Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)); return true;",
+            )?;
+            thread::sleep(Duration::from_millis(SCROLL_SETTLE_MS));
+
+            self.execute("window.scrollBy(0, -250); return true;")?;
+            thread::sleep(Duration::from_millis(SCROLL_NUDGE_MS));
+
+            self.execute(
+                "window.scrollTo(0, Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)); return true;",
+            )?;
+            thread::sleep(Duration::from_millis(SCROLL_SETTLE_MS));
+
+            let snapshot = self.execute(
+                r#"
+const links = [...document.querySelectorAll('a[href*="/instant/"]')]
+  .map((a) => a.href)
+  .filter((href) => href && !href.includes('/embed/'));
+return {
+  height: Math.max(
+    document.body ? document.body.scrollHeight : 0,
+    document.documentElement ? document.documentElement.scrollHeight : 0
+  ),
+  links: [...new Set(links)]
+};
+"#,
+            )?;
+
+            let height = snapshot
+                .get("height")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            if let Some(links) = snapshot.get("links").and_then(Value::as_array) {
+                for link in links.iter().filter_map(Value::as_str) {
+                    if link.contains("/instant/") && !link.contains("/embed/") {
+                        found.insert(link.to_string());
+                    }
+                }
+            }
+
+            let count = found.len();
+            send_progress(
+                progress,
+                &format!(
+                    "Scrolling MyInstants {country}: {count} sounds found (round {round})…"
+                ),
+                count,
+                None,
+            );
+
+            if count == last_count && height == last_height {
+                stable_rounds += 1;
+            } else {
+                stable_rounds = 0;
+            }
+
+            last_count = count;
+            last_height = height;
+
+            if stable_rounds >= STABLE_SCROLL_ROUNDS {
+                break;
+            }
+        }
+
+        let mut links = found.into_iter().collect::<Vec<_>>();
+        links.sort();
+        Ok(links)
+    }
+
+    fn session_url(&self, suffix: &str) -> String {
+        format!("{}/session/{}/{}", self.endpoint, self.session_id, suffix)
+    }
+}
+
+impl Drop for MyInstantsBrowser {
+    fn drop(&mut self) {
+        let _ = webdriver_request(
+            "DELETE",
+            &format!("{}/session/{}", self.endpoint, self.session_id),
+            None,
+        );
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 pub fn default_download_directory() -> PathBuf {
@@ -97,7 +351,12 @@ pub fn download(
     fs::create_dir_all(&output_dir).map_err(MyInstantsError::CreateDirectory)?;
 
     let countries = selected_countries(selection)?;
-    send_progress(&progress, "Discovering MyInstants sounds…", 0, None);
+    send_progress(
+        &progress,
+        "Launching Chromium for MyInstants infinite-scroll discovery…",
+        0,
+        None,
+    );
     let pages = discover_sound_pages(&countries, &progress, &cancelled)?;
 
     let mut manifest = pages.clone();
@@ -117,25 +376,22 @@ pub fn download(
         return Ok(DownloadReport::default());
     }
 
-    send_progress(
-        &progress,
-        &format!("Resolving and downloading {} sounds…", pages.len()),
-        0,
-        Some(pages.len()),
-    );
-
-    let processed = AtomicUsize::new(0);
-    let downloaded = AtomicUsize::new(0);
-    let reused = AtomicUsize::new(0);
-    let failed = AtomicUsize::new(0);
-    let paths = Mutex::new(Vec::<String>::new());
-    let seen_media = Mutex::new(HashSet::<String>::new());
-
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(DOWNLOAD_WORKERS)
         .thread_name(|index| format!("myinstants-{index}"))
         .build()
         .map_err(|error| MyInstantsError::WorkerPool(error.to_string()))?;
+
+    send_progress(
+        &progress,
+        &format!("Reading {} MyInstants sound pages…", pages.len()),
+        0,
+        Some(pages.len()),
+    );
+
+    let resolve_processed = AtomicUsize::new(0);
+    let resolve_failed = AtomicUsize::new(0);
+    let resolved = Mutex::new(Vec::<ResolvedSound>::new());
 
     pool.install(|| {
         pages.par_iter().for_each(|page_url| {
@@ -143,31 +399,108 @@ pub fn download(
                 return;
             }
 
-            let result = resolve_and_download(page_url, &output_dir, &seen_media, &cancelled);
+            match resolve_sound_detail(page_url, &cancelled) {
+                Ok(Some(sound)) => {
+                    if let Ok(mut resolved) = resolved.lock() {
+                        resolved.push(sound);
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    resolve_failed.fetch_add(1, Ordering::Relaxed);
+                    log::warn!("MyInstants detail page failed ({}): {}", page_url, error);
+                }
+            }
+
+            let current = resolve_processed.fetch_add(1, Ordering::Relaxed) + 1;
+            send_progress(
+                &progress,
+                &format!("Reading MyInstants sound pages… {current}/{}", pages.len()),
+                current,
+                Some(pages.len()),
+            );
+        });
+    });
+
+    if cancelled.load(Ordering::Relaxed) {
+        return Ok(DownloadReport {
+            failed: resolve_failed.load(Ordering::Relaxed),
+            cancelled: true,
+            ..DownloadReport::default()
+        });
+    }
+
+    let mut resolved = resolved.into_inner().unwrap_or_default();
+    resolved.sort_by(|left, right| {
+        sanitize_file_stem(&left.title)
+            .to_lowercase()
+            .cmp(&sanitize_file_stem(&right.title).to_lowercase())
+            .then(left.page_url.cmp(&right.page_url))
+    });
+
+    let mut seen_media = HashSet::<String>::new();
+    resolved.retain(|sound| seen_media.insert(sound.media_url.clone()));
+
+    let jobs = build_download_jobs(&output_dir, resolved);
+    let path_migrations = migrate_legacy_hash_names(&jobs);
+
+    send_progress(
+        &progress,
+        &format!("Downloading {} MyInstants sounds…", jobs.len()),
+        0,
+        Some(jobs.len()),
+    );
+
+    let processed = AtomicUsize::new(0);
+    let downloaded = AtomicUsize::new(0);
+    let reused = AtomicUsize::new(0);
+    let download_failed = AtomicUsize::new(0);
+    let paths = Mutex::new(Vec::<String>::new());
+
+    pool.install(|| {
+        jobs.par_iter().for_each(|job| {
+            if cancelled.load(Ordering::Relaxed) {
+                return;
+            }
+
+            let result = if job
+                .final_path
+                .metadata()
+                .map(|metadata| metadata.len() > 0)
+                .unwrap_or(false)
+            {
+                Ok(false)
+            } else {
+                download_media(&job.media_url, &job.final_path).map(|()| true)
+            };
+
             match result {
-                Ok(Some((path, was_downloaded))) => {
+                Ok(was_downloaded) => {
                     if was_downloaded {
                         downloaded.fetch_add(1, Ordering::Relaxed);
                     } else {
                         reused.fetch_add(1, Ordering::Relaxed);
                     }
                     if let Ok(mut paths) = paths.lock() {
-                        paths.push(path.to_string_lossy().into_owned());
+                        paths.push(job.final_path.to_string_lossy().into_owned());
                     }
                 }
-                Ok(None) => {}
                 Err(error) => {
-                    failed.fetch_add(1, Ordering::Relaxed);
-                    log::warn!("MyInstants sound failed ({}): {}", page_url, error);
+                    download_failed.fetch_add(1, Ordering::Relaxed);
+                    log::warn!(
+                        "MyInstants audio download failed ({}): {}",
+                        job.media_url,
+                        error
+                    );
                 }
             }
 
             let current = processed.fetch_add(1, Ordering::Relaxed) + 1;
             send_progress(
                 &progress,
-                &format!("Downloading MyInstants sounds… {current}/{}", pages.len()),
+                &format!("Downloading MyInstants sounds… {current}/{}", jobs.len()),
                 current,
-                Some(pages.len()),
+                Some(jobs.len()),
             );
         });
     });
@@ -178,9 +511,11 @@ pub fn download(
 
     Ok(DownloadReport {
         paths,
+        path_migrations,
         downloaded: downloaded.load(Ordering::Relaxed),
         reused: reused.load(Ordering::Relaxed),
-        failed: failed.load(Ordering::Relaxed),
+        failed: resolve_failed.load(Ordering::Relaxed)
+            + download_failed.load(Ordering::Relaxed),
         cancelled: cancelled.load(Ordering::Relaxed),
     })
 }
@@ -202,64 +537,35 @@ fn discover_sound_pages(
     progress: &Sender<DownloadProgress>,
     cancelled: &AtomicBool,
 ) -> Result<Vec<String>, MyInstantsError> {
-    let mut found = HashSet::new();
+    let browser = MyInstantsBrowser::start()?;
+    let mut found = HashSet::<String>::new();
 
     for country in countries {
-        let mut stable_pages = 0usize;
-        let mut page = 1usize;
-        let mut page_limit = MAX_PAGES;
+        if cancelled.load(Ordering::Relaxed) {
+            break;
+        }
 
-        while page <= page_limit && stable_pages < STABLE_PAGE_LIMIT {
-            if cancelled.load(Ordering::Relaxed) {
-                break;
-            }
+        send_progress(
+            progress,
+            &format!("Opening MyInstants {country} index…"),
+            found.len(),
+            None,
+        );
 
-            send_progress(
-                progress,
-                &format!("Scanning MyInstants {country} page {page}…"),
-                found.len(),
-                None,
-            );
-
-            let url = format!("{ORIGIN}/en/index/{country}/?page={page}");
-            let html = match fetch_text(&url) {
-                Ok(html) => html,
-                Err(error) if page > 1 => {
-                    log::debug!("Stopping MyInstants {country} scan at page {page}: {error}");
-                    break;
-                }
-                Err(error) => return Err(error),
-            };
-
-            if page == 1 {
-                if let Some(hint) = pagination_page_hint(&html) {
-                    page_limit = hint.clamp(1, MAX_PAGES);
-                }
-            }
-
-            let before = found.len();
-            found.extend(parse_instant_links(&html));
-            if found.len() == before {
-                stable_pages += 1;
-            } else {
-                stable_pages = 0;
-            }
-
-            page += 1;
+        for link in browser.collect_infinite_scroll_links(country, progress, cancelled)? {
+            found.insert(link);
         }
     }
 
-    let mut pages: Vec<_> = found.into_iter().collect();
+    let mut pages = found.into_iter().collect::<Vec<_>>();
     pages.sort();
     Ok(pages)
 }
 
-fn resolve_and_download(
+fn resolve_sound_detail(
     page_url: &str,
-    output_dir: &Path,
-    seen_media: &Mutex<HashSet<String>>,
     cancelled: &AtomicBool,
-) -> Result<Option<(PathBuf, bool)>, MyInstantsError> {
+) -> Result<Option<ResolvedSound>, MyInstantsError> {
     if cancelled.load(Ordering::Relaxed) {
         return Ok(None);
     }
@@ -272,29 +578,70 @@ fn resolve_and_download(
         });
     };
 
-    {
-        let mut seen = seen_media
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !seen.insert(media_url.clone()) {
-            return Ok(None);
+    let title = title_from_detail(&html).unwrap_or_else(|| slug_from_url(page_url));
+    Ok(Some(ResolvedSound {
+        page_url: page_url.to_string(),
+        media_url,
+        title,
+    }))
+}
+
+fn build_download_jobs(output_dir: &Path, sounds: Vec<ResolvedSound>) -> Vec<DownloadJob> {
+    let mut title_counts = HashMap::<String, usize>::new();
+
+    sounds
+        .into_iter()
+        .map(|sound| {
+            let stem = sanitize_file_stem(&sound.title);
+            let count = title_counts.entry(stem.clone()).or_insert(0);
+            *count += 1;
+
+            let filename = human_file_name(&stem, *count);
+            let final_path = output_dir.join(filename);
+            let legacy_path = output_dir.join(legacy_hashed_file_name_for(
+                &sound.title,
+                &sound.media_url,
+            ));
+
+            DownloadJob {
+                media_url: sound.media_url,
+                final_path,
+                legacy_path,
+            }
+        })
+        .collect()
+}
+
+fn migrate_legacy_hash_names(jobs: &[DownloadJob]) -> Vec<(String, String)> {
+    let mut migrations = Vec::new();
+
+    for job in jobs {
+        if job.final_path.exists() || !job.legacy_path.is_file() {
+            continue;
+        }
+
+        match fs::rename(&job.legacy_path, &job.final_path) {
+            Ok(()) => {
+                log::info!(
+                    "Renamed legacy MyInstants file '{}' to '{}'",
+                    job.legacy_path.display(),
+                    job.final_path.display()
+                );
+                migrations.push((
+                    job.legacy_path.to_string_lossy().into_owned(),
+                    job.final_path.to_string_lossy().into_owned(),
+                ));
+            }
+            Err(error) => log::warn!(
+                "Could not rename legacy MyInstants file '{}' to '{}': {}",
+                job.legacy_path.display(),
+                job.final_path.display(),
+                error
+            ),
         }
     }
 
-    let title = title_from_detail(&html).unwrap_or_else(|| slug_from_url(page_url));
-    let filename = file_name_for(&title, &media_url);
-    let final_path = output_dir.join(filename);
-
-    if final_path
-        .metadata()
-        .map(|metadata| metadata.len() > 0)
-        .unwrap_or(false)
-    {
-        return Ok(Some((final_path, false)));
-    }
-
-    download_media(&media_url, &final_path)?;
-    Ok(Some((final_path, true)))
+    migrations
 }
 
 fn fetch_text(url: &str) -> Result<String, MyInstantsError> {
@@ -386,21 +733,6 @@ fn download_media(url: &str, final_path: &Path) -> Result<(), MyInstantsError> {
     })
 }
 
-fn parse_instant_links(html: &str) -> Vec<String> {
-    let mut links = HashSet::new();
-    for href in quoted_attribute_values(html, "href") {
-        if !href.contains("/instant/") || href.contains("/embed/") {
-            continue;
-        }
-        if let Some(url) = absolute_url(&href) {
-            links.insert(url);
-        }
-    }
-    let mut links: Vec<_> = links.into_iter().collect();
-    links.sort();
-    links
-}
-
 fn media_url_from_detail(html: &str) -> Option<String> {
     for value in all_quoted_values(html) {
         if value.contains("/media/sounds/") {
@@ -437,66 +769,6 @@ fn title_from_detail(html: &str) -> Option<String> {
     (!title.is_empty()).then(|| title.to_string())
 }
 
-fn pagination_page_hint(html: &str) -> Option<usize> {
-    let mut max_page = None;
-    let mut rest = html;
-    while let Some(index) = rest.find("page=") {
-        rest = &rest[index + 5..];
-        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-        if let Ok(page) = digits.parse::<usize>() {
-            max_page = Some(max_page.map_or(page, |current: usize| current.max(page)));
-        }
-    }
-    max_page
-}
-
-fn quoted_attribute_values(html: &str, attribute: &str) -> Vec<String> {
-    let mut values = Vec::new();
-    let needle = format!("{attribute}=");
-    let mut rest = html;
-    while let Some(index) = rest.find(&needle) {
-        rest = &rest[index + needle.len()..];
-        let Some(quote) = rest.as_bytes().first().copied() else {
-            break;
-        };
-        if !matches!(quote, b'\'' | b'"') {
-            rest = &rest[1..];
-            continue;
-        }
-        let body = &rest[1..];
-        if let Some(end) = body.as_bytes().iter().position(|byte| *byte == quote) {
-            values.push(body[..end].to_string());
-            rest = &body[end + 1..];
-        } else {
-            break;
-        }
-    }
-    values
-}
-
-fn all_quoted_values(html: &str) -> Vec<String> {
-    let mut values = Vec::new();
-    let bytes = html.as_bytes();
-    let mut index = 0usize;
-    while index < bytes.len() {
-        if matches!(bytes[index], b'\'' | b'"') {
-            let quote = bytes[index];
-            let start = index + 1;
-            index = start;
-            while index < bytes.len() && bytes[index] != quote {
-                index += 1;
-            }
-            if index < bytes.len() {
-                values.push(html[start..index].to_string());
-            } else {
-                break;
-            }
-        }
-        index += 1;
-    }
-    values
-}
-
 fn absolute_url(value: &str) -> Option<String> {
     let value = value.trim();
     if value.starts_with("https://") || value.starts_with("http://") {
@@ -508,8 +780,16 @@ fn absolute_url(value: &str) -> Option<String> {
     None
 }
 
-fn file_name_for(title: &str, media_url: &str) -> String {
-    let safe_title = sanitize_file_stem(title);
+fn human_file_name(stem: &str, occurrence: usize) -> String {
+    if occurrence <= 1 {
+        format!("{stem}{AUDIO_EXTENSION}")
+    } else {
+        format!("{stem} ({occurrence}){AUDIO_EXTENSION}")
+    }
+}
+
+fn legacy_hashed_file_name_for(title: &str, media_url: &str) -> String {
+    let safe_title = legacy_sanitize_file_stem(title);
     let digest = Sha256::digest(media_url.as_bytes());
     let short_hash = digest
         .iter()
@@ -519,7 +799,7 @@ fn file_name_for(title: &str, media_url: &str) -> String {
     format!("{safe_title}-{short_hash}{AUDIO_EXTENSION}")
 }
 
-fn sanitize_file_stem(value: &str) -> String {
+fn legacy_sanitize_file_stem(value: &str) -> String {
     let mut out = String::new();
     let mut pending_space = false;
     for character in value.chars() {
@@ -540,6 +820,39 @@ fn sanitize_file_stem(value: &str) -> String {
     }
     let out = out.trim();
     if out.is_empty() {
+        "myinstants-sound".to_string()
+    } else {
+        out.to_string()
+    }
+}
+
+fn sanitize_file_stem(value: &str) -> String {
+    let mut out = String::new();
+    let mut pending_space = false;
+
+    for character in value.chars() {
+        let unsafe_for_filename =
+            character == '/' || character == '\\' || character.is_control();
+
+        if unsafe_for_filename || character.is_whitespace() {
+            pending_space = true;
+            continue;
+        }
+
+        let needs_space = pending_space && !out.is_empty();
+        let extra_bytes = character.len_utf8() + if needs_space { 1 } else { 0 };
+        if out.len().saturating_add(extra_bytes) > MAX_FILE_STEM_BYTES {
+            break;
+        }
+        if needs_space {
+            out.push(' ');
+        }
+        pending_space = false;
+        out.push(character);
+    }
+
+    let out = out.trim().trim_end_matches('.');
+    if out.is_empty() || out == "." || out == ".." {
         "myinstants-sound".to_string()
     } else {
         out.to_string()
@@ -580,6 +893,85 @@ fn decode_html_entities(value: &str) -> String {
         .replace("&nbsp;", " ")
 }
 
+fn find_chromium() -> Option<PathBuf> {
+    ["chromium", "chromium-browser", "google-chrome-stable", "google-chrome"]
+        .iter()
+        .copied()
+        .find_map(|binary| which::which(binary).ok())
+}
+
+fn webdriver_status_ready(endpoint: &str) -> bool {
+    let status_url = format!("{endpoint}/status");
+    let output = Command::new("curl")
+        .args(["--silent", "--show-error", "--max-time", "1"])
+        .arg(&status_url)
+        .output();
+
+    let Ok(output) = output else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+
+    serde_json::from_slice::<Value>(&output.stdout)
+        .ok()
+        .and_then(|value| value.pointer("/value/ready").and_then(Value::as_bool))
+        .unwrap_or(false)
+}
+
+fn webdriver_request(
+    method: &str,
+    url: &str,
+    body: Option<Value>,
+) -> Result<Value, MyInstantsError> {
+    let mut command = Command::new("curl");
+    command.args([
+        "--silent",
+        "--show-error",
+        "--max-time",
+        "30",
+        "--request",
+        method,
+        "--header",
+        "Content-Type: application/json; charset=utf-8",
+    ]);
+
+    let body_text = body.map(|body| body.to_string());
+    if let Some(body_text) = body_text.as_deref() {
+        command.args(["--data", body_text]);
+    }
+
+    command.arg(url);
+    let output = command
+        .output()
+        .map_err(|error| MyInstantsError::BrowserProtocol(error.to_string()))?;
+
+    if !output.status.success() {
+        return Err(MyInstantsError::BrowserProtocol(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+
+    let response: Value = serde_json::from_slice(&output.stdout).map_err(|error| {
+        MyInstantsError::BrowserProtocol(format!(
+            "invalid WebDriver response from {url}: {error}"
+        ))
+    })?;
+
+    if let Some(error_name) = response.pointer("/value/error").and_then(Value::as_str) {
+        let message = response
+            .pointer("/value/message")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown WebDriver error");
+        return Err(MyInstantsError::BrowserProtocol(format!(
+            "{error_name}: {message}"
+        )));
+    }
+
+    Ok(response)
+}
+
 fn send_progress(
     sender: &Sender<DownloadProgress>,
     message: &str,
@@ -600,10 +992,7 @@ mod tests {
     #[test]
     fn myinstants_uses_source_subfolder_under_download_root() {
         let root = PathBuf::from("/tmp/linux-soundboard-online");
-        assert_eq!(
-            source_download_directory(&root),
-            root.join("MyInstants")
-        );
+        assert_eq!(source_download_directory(&root), root.join("MyInstants"));
     }
 
     #[test]
@@ -615,23 +1004,6 @@ mod tests {
         );
         assert_eq!(download_directory(Some("   ")), default_download_directory());
         assert_eq!(download_directory(None), default_download_directory());
-    }
-
-    #[test]
-    fn parses_instant_links_and_deduplicates_them() {
-        let html = r#"
-            <a href="/en/instant/air-horn-1/">Air Horn</a>
-            <a href='/en/instant/air-horn-1/'>duplicate</a>
-            <a href="/en/instant/vine-boom-2/embed/">embed</a>
-            <a href="/en/instant/vine-boom-2/">Vine Boom</a>
-        "#;
-        assert_eq!(
-            parse_instant_links(html),
-            vec![
-                format!("{ORIGIN}/en/instant/air-horn-1/"),
-                format!("{ORIGIN}/en/instant/vine-boom-2/")
-            ]
-        );
     }
 
     #[test]
@@ -652,27 +1024,59 @@ mod tests {
     }
 
     #[test]
-    fn pagination_hint_uses_largest_page_number() {
-        let html = r#"<a href="?page=2">2</a><a href="?page=50">50</a>"#;
-        assert_eq!(pagination_page_hint(html), Some(50));
+    fn clean_file_names_use_page_title_without_hash_suffix() {
+        let stem = sanitize_file_stem("\"Wow!\" (anime voice accent)");
+        assert_eq!(
+            human_file_name(&stem, 1),
+            format!("\"Wow!\" (anime voice accent){AUDIO_EXTENSION}")
+        );
+        assert_eq!(
+            human_file_name(&stem, 2),
+            format!("\"Wow!\" (anime voice accent) (2){AUDIO_EXTENSION}")
+        );
     }
 
     #[test]
-    fn file_names_are_stable_and_safe() {
+    fn build_jobs_assigns_stable_human_readable_duplicate_names() {
+        let output_dir = PathBuf::from("/tmp/myinstants-test");
+        let sounds = vec![
+            ResolvedSound {
+                page_url: format!("{ORIGIN}/en/instant/first/"),
+                media_url: format!("{ORIGIN}/media/sounds/first{AUDIO_EXTENSION}"),
+                title: "Same Name".to_string(),
+            },
+            ResolvedSound {
+                page_url: format!("{ORIGIN}/en/instant/second/"),
+                media_url: format!("{ORIGIN}/media/sounds/second{AUDIO_EXTENSION}"),
+                title: "Same Name".to_string(),
+            },
+        ];
+
+        let jobs = build_download_jobs(&output_dir, sounds);
+        assert_eq!(
+            jobs[0].final_path,
+            output_dir.join(format!("Same Name{AUDIO_EXTENSION}"))
+        );
+        assert_eq!(
+            jobs[1].final_path,
+            output_dir.join(format!("Same Name (2){AUDIO_EXTENSION}"))
+        );
+    }
+
+    #[test]
+    fn legacy_hash_name_is_only_used_for_migration() {
         let media_url = format!("https://example.test/media/sounds/a{AUDIO_EXTENSION}");
-        let first = file_name_for("GET OUT!!", &media_url);
-        let second = file_name_for("GET OUT!!", &media_url);
-        assert_eq!(first, second);
-        assert!(first.starts_with("GET OUT-"));
-        assert!(first.ends_with(AUDIO_EXTENSION));
-        assert!(!first.contains('!'));
+        let legacy = legacy_hashed_file_name_for("GET OUT!!", &media_url);
+        assert!(legacy.starts_with("GET OUT-"));
+        assert!(legacy.ends_with(AUDIO_EXTENSION));
+        assert_ne!(legacy, format!("GET OUT{AUDIO_EXTENSION}"));
     }
 
     #[test]
     fn file_names_stay_within_safe_utf8_byte_limits() {
         let title = "界".repeat(200);
-        let media_url = format!("https://example.test/media/sounds/unicode{AUDIO_EXTENSION}");
-        let filename = file_name_for(&title, &media_url);
-        assert!(filename.len() <= MAX_FILE_STEM_BYTES + 1 + 8 + AUDIO_EXTENSION.len());
+        let stem = sanitize_file_stem(&title);
+        let filename = human_file_name(&stem, 1);
+        assert!(filename.len() <= MAX_FILE_STEM_BYTES + AUDIO_EXTENSION.len());
     }
 }

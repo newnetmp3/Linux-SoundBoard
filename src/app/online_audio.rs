@@ -569,6 +569,7 @@ Known music credits include Kira Daly (CC BY), Strobotone (CC BY-ND), cymbalBird
     send_progress(&progress, "RPG Soundboard pack ready", 2, Some(2));
     Ok(DownloadReport {
         paths,
+        path_migrations: Vec::new(),
         downloaded: if was_downloaded { 1 } else { 0 },
         reused: if was_downloaded { 0 } else { 1 },
         failed: 0,
@@ -632,6 +633,7 @@ Contains 50 RPG/fantasy/adventure audio files. Attribution to Kenney or Kenney.n
     send_progress(&progress, "Kenney RPG Audio ready", 2, Some(2));
     Ok(DownloadReport {
         paths,
+        path_migrations: Vec::new(),
         downloaded: if was_downloaded { 1 } else { 0 },
         reused: if was_downloaded { 0 } else { 1 },
         failed: 0,
@@ -1270,6 +1272,7 @@ fn report_from_counters(
     paths.dedup();
     DownloadReport {
         paths,
+        path_migrations: Vec::new(),
         downloaded: downloaded.load(Ordering::Relaxed),
         reused: reused.load(Ordering::Relaxed),
         failed: failed.load(Ordering::Relaxed),

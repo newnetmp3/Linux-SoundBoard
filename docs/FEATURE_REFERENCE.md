@@ -220,7 +220,7 @@ Archives, extracted files, and license/credit notes remain inside the correspond
 
 | Source | Local-copy behavior |
 | --- | --- |
-| **MyInstants** | Downloads a selected country index or all supported English-speaking indexes; reuses existing files and resumes partial downloads |
+| **MyInstants** | Drives a headless Chromium session through the site's real infinite scroll until both page height and discovered link count stay unchanged for 8 rounds; filenames use the visible sound name, with only `(2)`, `(3)`, etc. added for duplicate names; old hash-suffixed files are renamed when rediscovered |
 | **Tabletop Audio** | Downloads public 10-minute ambience MP3s; choose a fantasy/D&D/RPG-focused subset or the full catalogue; SoundPad clips are excluded |
 | **OpenGameArt** | Downloads curated fantasy/RPG ZIP packs, keeps the archives, extracts them, saves credit information, and imports supported audio |
 | **Freesound** | Downloads the **original uploaded files only** through Freesound APIv2 OAuth2. Preview files are never downloaded. An OAuth2 access token is required and is entered for the current downloader session |
@@ -232,6 +232,7 @@ Archives, extracted files, and license/credit notes remain inside the correspond
 >
 > - The downloader does not bypass login walls, CAPTCHAs, paywalls, or anti-bot checks.
 > - Some sources have attribution, noncommercial, or no-derivatives license terms. The downloader keeps source/credit notes with the local files; those terms still apply.
+> - MyInstants infinite-scroll discovery requires Chromium plus `chromedriver`. On Arch, the `chromium` package provides both. The app does not silently fall back to the incomplete static first page.
 > - OpenGameArt and RPG Soundboard archive extraction requires `unzip`.
 > - Cancelling keeps files that already finished downloading.
 
