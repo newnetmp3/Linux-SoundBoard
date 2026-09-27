@@ -24,6 +24,7 @@ const SOURCE_OPENGAMEART: u32 = 2;
 const SOURCE_FREESOUND: u32 = 3;
 const SOURCE_RPG_SOUNDBOARD: u32 = 4;
 const SOURCE_AMBIENT_MIXER: u32 = 5;
+const SOURCE_KENNEY: u32 = 6;
 
 const SOURCE_LABELS: &[&str] = &[
     "MyInstants",
@@ -32,6 +33,7 @@ const SOURCE_LABELS: &[&str] = &[
     "Freesound — original files only",
     "RPG Soundboard — free Medieval Fantasy pack",
     "Ambient Mixer — D&D / fantasy atmospheres",
+    "Kenney — RPG Audio (50 CC0 sounds)",
 ];
 
 pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound_list: SoundList) {
@@ -155,6 +157,12 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
     rpg_soundboard_box.append(&rpg_size);
     options_stack.add_named(&rpg_soundboard_box, Some("rpg-soundboard"));
 
+    let kenney_box = GtkBox::new(Orientation::Vertical, 6);
+    kenney_box.append(&source_note(
+        "Downloads Kenney's 50-file RPG Audio pack directly from Kenney, keeps the ZIP locally, extracts it, and imports supported audio. License: CC0.",
+    ));
+    options_stack.add_named(&kenney_box, Some("kenney"));
+
     let ambient_box = GtkBox::new(Orientation::Vertical, 6);
     ambient_box.append(&source_note(
         "Curated D&D/fantasy atmospheres whose pages expose a Download audio action. License/source notes are stored beside the local files.",
@@ -181,6 +189,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                 SOURCE_FREESOUND => "freesound",
                 SOURCE_RPG_SOUNDBOARD => "rpg-soundboard",
                 SOURCE_AMBIENT_MIXER => "ambient-mixer",
+                SOURCE_KENNEY => "kenney",
                 _ => "myinstants",
             };
             options_stack.set_visible_child_name(name);
@@ -501,6 +510,12 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                         .map_err(|error| error.to_string()),
                         SOURCE_AMBIENT_MIXER => online_audio::download_ambient_mixer(
                             &ambient_selection,
+                            &output_dir,
+                            progress_tx,
+                            cancelled,
+                        )
+                        .map_err(|error| error.to_string()),
+                        SOURCE_KENNEY => online_audio::download_kenney_rpg_audio(
                             &output_dir,
                             progress_tx,
                             cancelled,
