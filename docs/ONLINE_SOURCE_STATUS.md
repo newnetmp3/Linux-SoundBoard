@@ -6,7 +6,7 @@ Linux Soundboard treats the 100 requested websites as a **candidate registry**. 
 
 | ID | Source | Integration |
 | ---: | --- | --- |
-| 1 | Myinstants | Existing country-index integration; real rendered infinite scroll, clean filenames, validation, local source metadata |
+| 1 | Myinstants | Country-index integration using the site's public `?page=N` listing pagination, clean filenames, validation, and local source metadata |
 | 9 | Sound-Buttons.com | Browse/filter public meme/reaction sounds, preview full MP3, select individual sounds, validated download, JSON source metadata |
 | 16 | Movie Sound Clips | Browse/filter the site's Sound Effects library, preview/select public audio, CC BY-NC 3.0 metadata and attribution |
 | 20 | My-Instants.com | Browse/filter public trending clips, resolve full MP3 from detail pages, preview/select, validated download and terms metadata |
