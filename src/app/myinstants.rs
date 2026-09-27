@@ -472,8 +472,10 @@ fn all_quoted_values(html: &str) -> Vec<String> {
             while index < bytes.len() && bytes[index] != quote {
                 index += 1;
             }
-            if index <= bytes.len() {
+            if index < bytes.len() {
                 values.push(html[start..index].to_string());
+            } else {
+                break;
             }
         }
         index += 1;
@@ -606,9 +608,10 @@ mod tests {
             title_from_detail(&html).as_deref(),
             Some("Tuco: GET OUT & RUN")
         );
+        let expected_media_url = format!("{ORIGIN}{media_path}");
         assert_eq!(
             media_url_from_detail(&html).as_deref(),
-            Some(format!("{ORIGIN}{media_path}").as_str())
+            Some(expected_media_url.as_str())
         );
     }
 
