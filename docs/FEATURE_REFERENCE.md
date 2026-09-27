@@ -199,7 +199,22 @@ The transport bar runs across the top of the main window.
 
 - **Trigger:** Click the download-folder button in the top transport bar
 - **What it does:** Opens the Online Sound Downloader. Downloads are kept as local files in the selected folder and compatible audio is then imported into the active custom tab, or into General when a folder view is active.
-- **Download folder:** Use `Choose…` to select a location. The choice is remembered. Source-specific subfolders keep archives, extracted files, and license/credit notes.
+- **Main download folder:** Use `Choose…` to select a root location. The choice is remembered. Every source gets its own subfolder beneath that root.
+
+Typical layout:
+
+```text
+online-sounds/
+├── MyInstants/
+├── Tabletop Audio/
+├── OpenGameArt/
+├── Freesound/
+├── RPG Soundboard/
+├── Ambient Mixer/
+└── Kenney/
+```
+
+Archives, extracted files, and license/credit notes remain inside the corresponding source folder.
 
 **Sources:**
 
