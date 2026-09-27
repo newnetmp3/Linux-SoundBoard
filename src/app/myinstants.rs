@@ -222,10 +222,27 @@ impl MyInstantsBrowser {
         cancelled: &AtomicBool,
     ) -> Result<Vec<String>, MyInstantsError> {
         let url = format!("{ORIGIN}/en/index/{country}/");
+
+        // Seed discovery from the normal HTML response. MyInstants sound cards are
+        // primarily play controls rather than links, so this also protects us
+        // against a browser-rendering mismatch while the rendered page loads.
+        let static_html = fetch_text(&url)?;
+        let mut found = sound_page_urls_from_index_html(&static_html)
+            .into_iter()
+            .collect::<HashSet<_>>();
+        send_progress(
+            progress,
+            &format!(
+                "Loaded MyInstants {country}: {} sounds in the initial page…",
+                found.len()
+            ),
+            found.len(),
+            None,
+        );
+
         self.navigate(&url)?;
         thread::sleep(Duration::from_millis(SCROLL_SETTLE_MS));
 
-        let mut found = HashSet::<String>::new();
         let mut stable_rounds = 0usize;
         let mut last_count = 0usize;
         let mut last_height = 0u64;
@@ -250,15 +267,38 @@ impl MyInstantsBrowser {
 
             let snapshot = self.execute(
                 r#"
-const links = [...document.querySelectorAll('a[href*="/instant/"]')]
-  .map((a) => a.href)
-  .filter((href) => href && !href.includes('/embed/'));
+const links = new Set();
+
+for (const anchor of document.querySelectorAll('a[href*="/instant/"]')) {
+  const href = anchor.href;
+  if (href && !href.includes('/embed/')) {
+    links.add(href);
+  }
+}
+
+for (const element of document.querySelectorAll('[onclick*="play("]')) {
+  const onclick = element.getAttribute('onclick') || '';
+  const match = onclick.match(
+    /play\(\s*['"][^'"]+['"]\s*,\s*['"][^'"]*['"]\s*,\s*['"]([^'"]+)['"]/
+  );
+  if (!match || !match[1]) {
+    continue;
+  }
+  try {
+    links.add(new URL('/en/instant/' + match[1] + '/', window.location.origin).href);
+  } catch (_) {
+    // Ignore malformed card data and keep scanning.
+  }
+}
+
 return {
   height: Math.max(
     document.body ? document.body.scrollHeight : 0,
     document.documentElement ? document.documentElement.scrollHeight : 0
   ),
-  links: [...new Set(links)]
+  links: [...links],
+  playControls: document.querySelectorAll('[onclick*="play("]').length,
+  anchors: document.querySelectorAll('a[href*="/instant/"]').length
 };
 "#,
             )?;
@@ -276,10 +316,18 @@ return {
             }
 
             let count = found.len();
+            let play_controls = snapshot
+                .get("playControls")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            let anchors = snapshot
+                .get("anchors")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
             send_progress(
                 progress,
                 &format!(
-                    "Scrolling MyInstants {country}: {count} sounds found (round {round})…"
+                    "Scrolling MyInstants {country}: {count} sounds found (round {round}; {play_controls} play controls, {anchors} instant links)…"
                 ),
                 count,
                 None,
@@ -806,6 +854,31 @@ fn all_quoted_values(html: &str) -> Vec<String> {
     values
 }
 
+fn sound_page_urls_from_index_html(html: &str) -> Vec<String> {
+    let mut pages = HashSet::<String>::new();
+
+    for value in all_quoted_values(html) {
+        if value.contains("/instant/") && !value.contains("/embed/") {
+            if let Some(url) = absolute_url(&value) {
+                pages.insert(url);
+            }
+        }
+
+        if !value.contains("play(") {
+            continue;
+        }
+
+        let args = all_quoted_values(&value);
+        if let Some(slug) = args.get(2).map(String::as_str).filter(|slug| !slug.is_empty()) {
+            pages.insert(format!("{ORIGIN}/en/instant/{slug}/"));
+        }
+    }
+
+    let mut pages = pages.into_iter().collect::<Vec<_>>();
+    pages.sort();
+    pages
+}
+
 fn media_url_from_detail(html: &str) -> Option<String> {
     for value in all_quoted_values(html) {
         if value.contains("/media/sounds/") {
@@ -1103,6 +1176,21 @@ mod tests {
         );
         assert_eq!(download_directory(Some("   ")), default_download_directory());
         assert_eq!(download_directory(None), default_download_directory());
+    }
+
+    #[test]
+    fn index_parser_reads_myinstants_play_controls_and_links() {
+        let html = r#"
+            <button onclick="play('/media/sounds/vine-boom.mp3', 'VINE BOOM SOUND', 'vine-boom-sound-1234')"></button>
+            <a href="/en/instant/bruh-5678/">BRUH</a>
+            <iframe src="/instant/ignored-9999/embed/"></iframe>
+        "#;
+        let pages = sound_page_urls_from_index_html(html);
+        assert!(pages.contains(
+            &format!("{ORIGIN}/en/instant/vine-boom-sound-1234/")
+        ));
+        assert!(pages.contains(&format!("{ORIGIN}/en/instant/bruh-5678/")));
+        assert!(!pages.iter().any(|page| page.contains("ignored-9999")));
     }
 
     #[test]
