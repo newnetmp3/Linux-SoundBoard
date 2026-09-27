@@ -76,7 +76,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
 
     let myinstants_box = GtkBox::new(Orientation::Vertical, 6);
     let myinstants_note = source_note(
-        "Country index downloads. Existing files are reused and interrupted downloads resume.",
+        "Country index downloads use a headless Chromium session to perform MyInstants' real infinite scroll. Existing files are reused, interrupted downloads resume, and filenames follow the visible sound name. Requires Chromium + chromedriver.",
     );
     myinstants_box.append(&myinstants_note);
     let mut country_labels = vec!["All English-speaking indexes"];
