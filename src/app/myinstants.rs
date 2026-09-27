@@ -330,7 +330,7 @@ fn discover_sound_pages(
         }
 
         let mut no_new_pages = 0usize;
-        let mut country_unique = 0usize;
+        let mut country_seen = HashSet::<String>::new();
 
         for page in 1..=MAX_INDEX_PAGES {
             if cancelled.load(Ordering::Relaxed) {
@@ -367,10 +367,10 @@ fn discover_sound_pages(
             } else {
                 let mut added = 0usize;
                 for link in page_links {
-                    if found.insert(link) {
+                    if country_seen.insert(link.clone()) {
                         added += 1;
-                        country_unique += 1;
                     }
+                    found.insert(link);
                 }
 
                 if added == 0 {
@@ -382,7 +382,8 @@ fn discover_sound_pages(
                 send_progress(
                     progress,
                     &format!(
-                        "MyInstants {country} page {page}: {added} new sounds, {country_unique} unique for this country…"
+                        "MyInstants {country} page {page}: {added} new sounds, {} unique for this country…",
+                        country_seen.len()
                     ),
                     found.len(),
                     None,
@@ -393,7 +394,8 @@ fn discover_sound_pages(
                 send_progress(
                     progress,
                     &format!(
-                        "Finished MyInstants {country} after page {page}: {country_unique} unique sounds found."
+                        "Finished MyInstants {country} after page {page}: {} unique sounds found.",
+                        country_seen.len()
                     ),
                     found.len(),
                     None,
