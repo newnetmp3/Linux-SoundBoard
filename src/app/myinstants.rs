@@ -733,6 +733,31 @@ fn download_media(url: &str, final_path: &Path) -> Result<(), MyInstantsError> {
     })
 }
 
+fn all_quoted_values(html: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let bytes = html.as_bytes();
+    let mut index = 0usize;
+
+    while index < bytes.len() {
+        if matches!(bytes[index], b'\'' | b'"') {
+            let quote = bytes[index];
+            let start = index + 1;
+            index = start;
+            while index < bytes.len() && bytes[index] != quote {
+                index += 1;
+            }
+            if index < bytes.len() {
+                values.push(html[start..index].to_string());
+            } else {
+                break;
+            }
+        }
+        index += 1;
+    }
+
+    values
+}
+
 fn media_url_from_detail(html: &str) -> Option<String> {
     for value in all_quoted_values(html) {
         if value.contains("/media/sounds/") {
