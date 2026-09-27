@@ -49,6 +49,7 @@ pub struct DownloadProgress {
 #[derive(Debug, Default)]
 pub struct DownloadReport {
     pub paths: Vec<String>,
+    pub path_migrations: Vec<(String, String)>,
     pub downloaded: usize,
     pub reused: usize,
     pub failed: usize,
@@ -441,7 +442,7 @@ pub fn download(
     resolved.retain(|sound| seen_media.insert(sound.media_url.clone()));
 
     let jobs = build_download_jobs(&output_dir, resolved);
-    migrate_legacy_hash_names(&jobs);
+    let path_migrations = migrate_legacy_hash_names(&jobs);
 
     send_progress(
         &progress,
@@ -510,6 +511,7 @@ pub fn download(
 
     Ok(DownloadReport {
         paths,
+        path_migrations,
         downloaded: downloaded.load(Ordering::Relaxed),
         reused: reused.load(Ordering::Relaxed),
         failed: resolve_failed.load(Ordering::Relaxed)
@@ -610,18 +612,26 @@ fn build_download_jobs(output_dir: &Path, sounds: Vec<ResolvedSound>) -> Vec<Dow
         .collect()
 }
 
-fn migrate_legacy_hash_names(jobs: &[DownloadJob]) {
+fn migrate_legacy_hash_names(jobs: &[DownloadJob]) -> Vec<(String, String)> {
+    let mut migrations = Vec::new();
+
     for job in jobs {
         if job.final_path.exists() || !job.legacy_path.is_file() {
             continue;
         }
 
         match fs::rename(&job.legacy_path, &job.final_path) {
-            Ok(()) => log::info!(
-                "Renamed legacy MyInstants file '{}' to '{}'",
-                job.legacy_path.display(),
-                job.final_path.display()
-            ),
+            Ok(()) => {
+                log::info!(
+                    "Renamed legacy MyInstants file '{}' to '{}'",
+                    job.legacy_path.display(),
+                    job.final_path.display()
+                );
+                migrations.push((
+                    job.legacy_path.to_string_lossy().into_owned(),
+                    job.final_path.to_string_lossy().into_owned(),
+                ));
+            }
             Err(error) => log::warn!(
                 "Could not rename legacy MyInstants file '{}' to '{}': {}",
                 job.legacy_path.display(),
@@ -630,6 +640,8 @@ fn migrate_legacy_hash_names(jobs: &[DownloadJob]) {
             ),
         }
     }
+
+    migrations
 }
 
 fn fetch_text(url: &str) -> Result<String, MyInstantsError> {
