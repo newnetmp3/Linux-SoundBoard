@@ -9,6 +9,7 @@ arch=('x86_64')
 url="https://github.com/germanua/Linux-SoundBoard"
 license=('LicenseRef-PolyForm-Noncommercial-1.0.0')
 depends=(
+  'curl'
   'gtk4'
   'libadwaita'
   'libpulse'
