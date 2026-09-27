@@ -195,6 +195,32 @@ The transport bar runs across the top of the main window.
 
 ---
 
+### Download Online Sounds
+
+- **Trigger:** Click the download-folder button in the top transport bar
+- **What it does:** Opens the Online Sound Downloader. Downloads are kept as local files in the selected folder and compatible audio is then imported into the active custom tab, or into General when a folder view is active.
+- **Download folder:** Use `Choose…` to select a location. The choice is remembered. Source-specific subfolders keep archives, extracted files, and license/credit notes.
+
+**Sources:**
+
+| Source | Local-copy behavior |
+| --- | --- |
+| **MyInstants** | Downloads a selected country index or all supported English-speaking indexes; reuses existing files and resumes partial downloads |
+| **Tabletop Audio** | Downloads public 10-minute ambience MP3s; choose a fantasy/D&D/RPG-focused subset or the full catalogue; SoundPad clips are excluded |
+| **OpenGameArt** | Downloads curated fantasy/RPG ZIP packs, keeps the archives, extracts them, saves credit information, and imports supported audio |
+| **Freesound** | Downloads the **original uploaded files only** through Freesound APIv2 OAuth2. Preview files are never downloaded. An OAuth2 access token is required and is entered for the current downloader session |
+| **RPG Soundboard** | Downloads the publicly offered Medieval Fantasy `.rpsb` starter pack, keeps the archive, extracts its bundled audio, and imports supported files |
+| **Ambient Mixer** | Downloads curated D&D/fantasy atmospheres when their public page exposes a downloadable audio file and stores source/license notes beside them |
+
+> **Notes:**
+>
+> - The downloader does not bypass login walls, CAPTCHAs, paywalls, or anti-bot checks.
+> - Some sources have attribution, noncommercial, or no-derivatives license terms. The downloader keeps source/credit notes with the local files; those terms still apply.
+> - OpenGameArt and RPG Soundboard archive extraction requires `unzip`.
+> - Cancelling keeps files that already finished downloading.
+
+---
+
 ### Search Sounds
 
 - **Trigger:** Type into the search box
