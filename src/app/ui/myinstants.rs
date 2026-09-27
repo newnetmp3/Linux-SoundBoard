@@ -243,13 +243,13 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                         .set_label("Download complete. Importing sounds into the soundboard…");
                     import_downloaded_sounds(
                         report,
-                        tab_id.clone(),
-                        Arc::clone(&state_done),
-                        sound_list_done.clone(),
-                        country_done.clone(),
-                        status_done.clone(),
-                        start_done.clone(),
-                        close_done.clone(),
+                        tab_id,
+                        state_done,
+                        sound_list_done,
+                        country_done,
+                        status_done,
+                        start_done,
+                        close_done,
                     );
                 },
             );
@@ -287,7 +287,7 @@ fn import_downloaded_sounds(
         cancelled: _,
     } = report;
 
-    let sound_list_done = sound_list.clone();
+    let sound_list_done = sound_list;
     let status_done = status.clone();
     let country_done = country.clone();
     let start_done = start.clone();
