@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
-use crate::download_validation::validate_download;
+use crate::download_validation::validate_download_as;
 use crate::myinstants::{DownloadProgress, DownloadReport};
 
 const USER_AGENT: &str =
@@ -552,7 +552,7 @@ fn download_clip(
         });
     }
 
-    validate_download(&part_path).map_err(|message| {
+    validate_download_as(&part_path, final_path).map_err(|message| {
         let _ = fs::remove_file(&part_path);
         PublicClipError::InvalidDownload(message)
     })?;
