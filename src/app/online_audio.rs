@@ -526,14 +526,14 @@ pub fn download_rpg_soundboard_pack(
         None,
     );
     let html = fetch_text("RPG Soundboard", RPG_SOUNDBOARD_HOME, None)?;
-    let href = find_href_containing(&html, ".rpsb").ok_or_else(|| OnlineAudioError::Parse {
+    let href = find_rpg_soundboard_pack_href(&html).ok_or_else(|| OnlineAudioError::Parse {
         provider: "RPG Soundboard",
-        message: "the free Medieval Fantasy .rpsb download link was not found".to_string(),
+        message: "the Medieval Fantasy 'Download Free' link was not found".to_string(),
     })?;
     let download_url = absolute_url(RPG_SOUNDBOARD_HOME, &href).ok_or_else(|| {
         OnlineAudioError::Parse {
             provider: "RPG Soundboard",
-            message: "the .rpsb download URL could not be resolved".to_string(),
+            message: "the Medieval Fantasy download URL could not be resolved".to_string(),
         }
     })?;
 
@@ -1119,6 +1119,70 @@ fn normalized_audio_extension(file_type: &str) -> Option<&'static str> {
     }
 }
 
+fn find_rpg_soundboard_pack_href(html: &str) -> Option<String> {
+    if let Some(href) = find_href_containing(html, ".rpsb") {
+        return Some(href);
+    }
+
+    let lowered = html.to_ascii_lowercase();
+    let section_start = lowered
+        .find("medieval fantasy soundboard")
+        .unwrap_or_default();
+    let section_end = lowered[section_start..]
+        .find("frequently asked questions")
+        .map(|offset| section_start + offset)
+        .unwrap_or(html.len());
+    let section = &html[section_start..section_end];
+
+    find_anchor_href_by_text(section, "download free").or_else(|| {
+        quoted_attribute_values(section, "href")
+            .into_iter()
+            .find(|href| {
+                let lower = href.to_ascii_lowercase();
+                lower.contains("download")
+                    && !lower.contains("steam")
+                    && !lower.contains("appstore")
+                    && !lower.contains("google")
+            })
+    })
+}
+
+fn find_anchor_href_by_text(html: &str, phrase: &str) -> Option<String> {
+    let phrase = phrase.to_ascii_lowercase();
+    let mut rest = html;
+
+    while let Some(start) = rest.find("<a") {
+        rest = &rest[start + 2..];
+        let Some(tag_end) = rest.find('>') else {
+            break;
+        };
+        let tag = &rest[..tag_end];
+        let body = &rest[tag_end + 1..];
+        let Some(close) = body.find("</a>") else {
+            rest = body;
+            continue;
+        };
+
+        let text = decode_html_entities(&strip_tags(body[..close].to_string()))
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase();
+
+        if text.contains(&phrase) {
+            if let Some(href) = quoted_attribute_values(tag, "href").into_iter().next() {
+                if !href.starts_with('#') && !href.trim().is_empty() {
+                    return Some(href);
+                }
+            }
+        }
+
+        rest = &body[close + 4..];
+    }
+
+    None
+}
+
 fn find_href_containing(html: &str, needle: &str) -> Option<String> {
     quoted_attribute_values(html, "href")
         .into_iter()
@@ -1336,6 +1400,36 @@ mod tests {
         assert_eq!(
             absolute_url("https://example.com/path/page", "file.mp3").as_deref(),
             Some("https://example.com/path/file.mp3")
+        );
+    }
+
+    #[test]
+    fn finds_rpg_soundboard_download_by_visible_text_without_rpsb_suffix() {
+        let html = r#"
+            <section>
+              <h2>Medieval Fantasy Soundboard</h2>
+              <p>medieval_fantasy.rpsb · 457 MB</p>
+              <a href="/downloads/free-medieval-pack?source=site">
+                <span>Download Free</span>
+              </a>
+            </section>
+            <section><h2>Frequently Asked Questions</h2></section>
+        "#;
+        assert_eq!(
+            find_rpg_soundboard_pack_href(html).as_deref(),
+            Some("/downloads/free-medieval-pack?source=site")
+        );
+    }
+
+    #[test]
+    fn rpg_soundboard_direct_rpsb_href_still_wins() {
+        let html = r#"
+            <a href="/files/medieval_fantasy.rpsb">Download Free</a>
+            <a href="/downloads/generic">Download Free</a>
+        "#;
+        assert_eq!(
+            find_rpg_soundboard_pack_href(html).as_deref(),
+            Some("/files/medieval_fantasy.rpsb")
         );
     }
 
