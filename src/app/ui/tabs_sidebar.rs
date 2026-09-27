@@ -42,6 +42,7 @@ struct FolderNode {
     expansion_restored: Cell<bool>,
     disclosure_handlers: RefCell<Option<(Image, GestureClick, TreeListRow, glib::SignalHandlerId)>>,
     context_gesture: RefCell<Option<GestureClick>>,
+    visibility_gesture: RefCell<Option<GestureClick>>,
     drop_target: RefCell<Option<gtk4::DropTargetAsync>>,
     drag_source: RefCell<Option<gtk4::DragSource>>,
     /// Loaded sibling index used for prefetch.
@@ -211,6 +212,7 @@ impl FolderNode {
             expansion_restored: Cell::new(false),
             disclosure_handlers: RefCell::new(None),
             context_gesture: RefCell::new(None),
+            visibility_gesture: RefCell::new(None),
             drop_target: RefCell::new(None),
             drag_source: RefCell::new(None),
             sibling_index: 0,
@@ -242,6 +244,7 @@ impl FolderNode {
             expansion_restored: Cell::new(false),
             disclosure_handlers: RefCell::new(None),
             context_gesture: RefCell::new(None),
+            visibility_gesture: RefCell::new(None),
             drop_target: RefCell::new(None),
             drag_source: RefCell::new(None),
             sibling_index,
@@ -286,6 +289,8 @@ fn drag_action_for_intent(intent: SidebarDropIntent) -> gtk4::gdk::DragAction {
 
 type FolderChangedCallback = Rc<RefCell<Option<Box<dyn Fn() + 'static>>>>;
 type FolderMergeCallback = Rc<RefCell<Option<Box<dyn Fn(FolderMergeRequest) + 'static>>>>;
+type FolderVisibilityToggleCallback =
+    Rc<RefCell<Option<Box<dyn Fn(String, String) + 'static>>>>;
 
 /// What a folder row's drop target reports back to the sidebar.
 #[derive(Clone)]
@@ -739,6 +744,8 @@ impl TabsSidebar {
         let folder_reordered: FolderChangedCallback = Rc::new(RefCell::new(None));
         let folder_merged: FolderMergeCallback = Rc::new(RefCell::new(None));
         let folder_removed: FolderChangedCallback = Rc::new(RefCell::new(None));
+        let folder_visibility_toggle: FolderVisibilityToggleCallback =
+            Rc::new(RefCell::new(None));
         let library_for_children = state.library.clone();
         let folder_tree = TreeListModel::new(folder_roots.clone(), false, false, move |item| {
             let boxed = item.downcast_ref::<BoxedAnyObject>()?;
@@ -794,6 +801,7 @@ impl TabsSidebar {
         let folder_rebuilding_for_expansion = Rc::clone(&folder_rebuilding);
         let folder_rebuilding_for_actions = Rc::clone(&folder_rebuilding);
         let folder_removed_for_menu = Rc::clone(&folder_removed);
+        let folder_visibility_toggle_for_rows = Rc::clone(&folder_visibility_toggle);
         let folder_drop_callbacks = FolderDropCallbacks {
             changed: Rc::clone(&folder_changed),
             reordered: Rc::clone(&folder_reordered),
@@ -851,6 +859,9 @@ impl TabsSidebar {
             let install_disclosure = has_children && node.disclosure_handlers.borrow().is_none();
             let install_context_menu =
                 node.relative_path.is_some() && node.context_gesture.borrow().is_none();
+            let install_visibility_toggle =
+                node.relative_path.is_some() && node.visibility_gesture.borrow().is_none();
+            let visibility_relative_path = node.relative_path.clone();
             let install_drop_target =
                 node.relative_path.is_some() && node.drop_target.borrow().is_none();
             let context_relative_path = node.relative_path.clone();
@@ -953,6 +964,27 @@ impl TabsSidebar {
                 if let Ok(node) = boxed.try_borrow::<FolderNode>() {
                     node.expanded_handler
                         .replace(Some((row.clone(), expansion_handler)));
+                }
+            }
+            if install_visibility_toggle {
+                if let Some(relative_path) = visibility_relative_path {
+                    row_box.set_tooltip_text(Some(
+                        "Click to show only this folder; click the selected folder again to show all sounds",
+                    ));
+                    let callback = Rc::clone(&folder_visibility_toggle_for_rows);
+                    let toggle_root = root_path.clone();
+                    let toggle_relative = relative_path;
+                    let gesture = GestureClick::new();
+                    gesture.set_button(1);
+                    gesture.connect_pressed(move |_, _, _, _| {
+                        if let Some(callback) = callback.borrow().as_ref() {
+                            callback(toggle_root.clone(), toggle_relative.clone());
+                        }
+                    });
+                    row_box.add_controller(gesture.clone());
+                    if let Ok(node) = boxed.try_borrow::<FolderNode>() {
+                        node.visibility_gesture.replace(Some(gesture));
+                    }
                 }
             }
             if install_context_menu {
@@ -1211,19 +1243,28 @@ impl TabsSidebar {
             let Some(boxed) = row.item().and_downcast::<BoxedAnyObject>() else {
                 return;
             };
-            let (disclosure_handlers, expanded_handler, gesture, drop_target, drag_source) = {
+            let (
+                disclosure_handlers,
+                expanded_handler,
+                gesture,
+                visibility_gesture,
+                drop_target,
+                drag_source,
+            ) = {
                 let Ok(node) = boxed.try_borrow::<FolderNode>() else {
                     return;
                 };
                 let disclosure_handlers = node.disclosure_handlers.borrow_mut().take();
                 let expanded_handler = node.expanded_handler.borrow_mut().take();
                 let gesture = node.context_gesture.borrow_mut().take();
+                let visibility_gesture = node.visibility_gesture.borrow_mut().take();
                 let drop_target = node.drop_target.borrow_mut().take();
                 let drag_source = node.drag_source.borrow_mut().take();
                 (
                     disclosure_handlers,
                     expanded_handler,
                     gesture,
+                    visibility_gesture,
                     drop_target,
                     drag_source,
                 )
@@ -1237,6 +1278,9 @@ impl TabsSidebar {
             }
             if let Some(gesture) = gesture {
                 expander.remove_controller(&gesture);
+            }
+            if let Some(gesture) = visibility_gesture {
+                row_box.remove_controller(&gesture);
             }
             if let Some(target) = drop_target {
                 row_box.remove_controller(&target);
@@ -1271,6 +1315,49 @@ impl TabsSidebar {
             toast_sender: Mutex::new(None),
             dialog_host,
         });
+        {
+            let inner_weak = Arc::downgrade(&inner);
+            let folder_selection = folder_selection.clone();
+            folder_visibility_toggle
+                .borrow_mut()
+                .replace(Box::new(move |root_path, relative_path| {
+                    let Some(inner) = inner_weak.upgrade() else {
+                        return;
+                    };
+                    let identity = format!("folder:{root_path}/{relative_path}");
+                    if *inner.active_tab_id.lock() != identity {
+                        return;
+                    }
+
+                    let inner_weak = Arc::downgrade(&inner);
+                    let folder_selection = folder_selection.clone();
+                    glib::idle_add_local_once(move || {
+                        let Some(inner) = inner_weak.upgrade() else {
+                            return;
+                        };
+                        folder_selection.unselect_all();
+
+                        let mut row = inner.list_box.first_child();
+                        while let Some(child) = row {
+                            if let Some(list_row) = child.downcast_ref::<ListBoxRow>() {
+                                if list_row.widget_name() == GENERAL_TAB_ID {
+                                    inner.list_box.select_row(Some(list_row));
+                                    return;
+                                }
+                            }
+                            row = child.next_sibling();
+                        }
+
+                        *inner.active_tab_id.lock() = GENERAL_TAB_ID.to_string();
+                        if let Some(callback) = inner.on_tab_selected.borrow().as_ref() {
+                            callback(SidebarSelection {
+                                identity: GENERAL_TAB_ID.to_string(),
+                                scope: crate::library_store::LibraryScope::General,
+                            });
+                        }
+                    });
+                }));
+        }
         {
             let inner_weak = Arc::downgrade(&inner);
             folder_changed.borrow_mut().replace(Box::new(move || {
