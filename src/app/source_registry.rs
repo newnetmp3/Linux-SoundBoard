@@ -112,7 +112,7 @@ pub const SOURCES: &[SourceCandidate] = &[
     SourceCandidate { id: 97, name: "Glitchedtones", url: "https://glitchedtones.com/", support: SourceSupport::Candidate },
     SourceCandidate { id: 98, name: "Sample Focus", url: "https://samplefocus.com/", support: SourceSupport::Candidate },
     SourceCandidate { id: 99, name: "Tabletop Audio", url: "https://tabletopaudio.com/", support: SourceSupport::Working },
-    SourceCandidate { id: 100, name: "Ambient Mixer", url: "https://www.ambient-mixer.com/", support: SourceSupport::Working },
+    SourceCandidate { id: 100, name: "Ambient Mixer", url: "https://www.ambient-mixer.com/", support: SourceSupport::Candidate },
 ];
 
 pub fn working_sources() -> impl Iterator<Item = &'static SourceCandidate> {
