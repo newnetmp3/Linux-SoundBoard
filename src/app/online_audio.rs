@@ -9,6 +9,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use walkdir::WalkDir;
 
+use crate::download_probe::probe_download_start as probe_binary_start;
 use crate::download_validation::validate_download_as;
 use crate::myinstants::{DownloadProgress, DownloadReport};
 
@@ -212,6 +213,91 @@ struct FreesoundResult {
     url: String,
     #[serde(rename = "type")]
     file_type: String,
+}
+
+pub fn probe_tabletop_audio_start() -> Result<String, String> {
+    let html = fetch_text("Tabletop Audio", TABLETOP_HOME, None).map_err(|error| error.to_string())?;
+    let tracks = parse_tabletop_tracks(&html);
+    let track = tracks
+        .first()
+        .ok_or_else(|| "Tabletop Audio catalogue exposed no downloadable tracks".to_string())?;
+    let probe = probe_binary_start("Tabletop Audio", &track.url, "mp3", None)?;
+    Ok(format!("MP3 header valid for '{}' ({})", track.title, probe.content_type))
+}
+
+pub fn probe_opengameart_start() -> Result<String, String> {
+    let mut checked = 0usize;
+    for pack in OPEN_GAME_ART_CURATED {
+        let html = fetch_text("OpenGameArt", pack.page_url, None)
+            .map_err(|error| error.to_string())?;
+        let href = find_href_containing(&html, ".zip")
+            .ok_or_else(|| format!("{} did not expose a ZIP link", pack.title))?;
+        let url = absolute_url(pack.page_url, &href)
+            .ok_or_else(|| format!("{} ZIP URL could not be resolved", pack.title))?;
+        probe_binary_start("OpenGameArt", &url, "zip", None)?;
+        checked += 1;
+    }
+    Ok(format!("{checked} curated ZIP pack headers valid"))
+}
+
+pub fn probe_freesound_start(oauth_access_token: &str) -> Result<String, String> {
+    let token = oauth_access_token.trim();
+    if token.is_empty() {
+        return Err("OAuth2 access token required".to_string());
+    }
+    let bearer = format!("Authorization: Bearer {token}");
+    let json = fetch_freesound_search("door", 1, &bearer).map_err(|error| error.to_string())?;
+    let response: FreesoundSearchResponse =
+        serde_json::from_str(&json).map_err(|error| format!("Freesound search JSON: {error}"))?;
+    let sound = response
+        .results
+        .first()
+        .ok_or_else(|| "Freesound test search returned no results".to_string())?;
+    let extension = normalized_audio_extension(&sound.file_type)
+        .ok_or_else(|| format!("unsupported Freesound original type '{}'", sound.file_type))?;
+    let url = format!("https://freesound.org/apiv2/sounds/{}/download/", sound.id);
+    let probe = probe_binary_start("Freesound", &url, extension, Some(&bearer))?;
+    Ok(format!(
+        "original .{extension} header valid for '{}' ({})",
+        sound.name, probe.content_type
+    ))
+}
+
+pub fn probe_rpg_soundboard_start() -> Result<String, String> {
+    let html =
+        fetch_text("RPG Soundboard", RPG_SOUNDBOARD_HOME, None).map_err(|error| error.to_string())?;
+    let href = find_rpg_soundboard_pack_href(&html)
+        .ok_or_else(|| "Medieval Fantasy Download Free link not found".to_string())?;
+    let url = absolute_url(RPG_SOUNDBOARD_HOME, &href)
+        .ok_or_else(|| "Medieval Fantasy download URL could not be resolved".to_string())?;
+    let probe = probe_binary_start("RPG Soundboard", &url, "rpsb", None)?;
+    Ok(format!("RPSB/ZIP header valid ({})", probe.content_type))
+}
+
+pub fn probe_kenney_start() -> Result<String, String> {
+    let html =
+        fetch_text("Kenney", KENNEY_RPG_AUDIO_PAGE, None).map_err(|error| error.to_string())?;
+    let href = find_href_containing(&html, ".zip")
+        .ok_or_else(|| "Kenney RPG Audio ZIP link not found".to_string())?;
+    let url = absolute_url(KENNEY_RPG_AUDIO_PAGE, &href)
+        .ok_or_else(|| "Kenney RPG Audio ZIP URL could not be resolved".to_string())?;
+    let probe = probe_binary_start("Kenney", &url, "zip", None)?;
+    Ok(format!("ZIP header valid ({})", probe.content_type))
+}
+
+pub fn probe_ambient_mixer_start() -> Result<String, String> {
+    let (_, label, page_url) = AMBIENT_MIXER_CHOICES
+        .iter()
+        .find(|(_, _, url)| !url.is_empty())
+        .copied()
+        .ok_or_else(|| "no Ambient Mixer test atmosphere configured".to_string())?;
+    let html = fetch_text("Ambient Mixer", page_url, None).map_err(|error| error.to_string())?;
+    let href = find_download_audio_href(&html)
+        .ok_or_else(|| format!("'{label}' page exposed no download action"))?;
+    let url = absolute_url(page_url, &href)
+        .ok_or_else(|| format!("'{label}' download URL could not be resolved"))?;
+    let probe = probe_binary_start("Ambient Mixer", &url, "mp3", None)?;
+    Ok(format!("MP3 header valid for '{label}' ({})", probe.content_type))
 }
 
 pub fn download_tabletop_audio(
