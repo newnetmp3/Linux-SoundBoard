@@ -5,6 +5,7 @@ pub mod commands;
 pub mod config;
 pub mod legacy_migration;
 pub mod library_store;
+pub(crate) mod download_probe;
 pub(crate) mod download_validation;
 pub(crate) mod myinstants;
 pub(crate) mod online_audio;
