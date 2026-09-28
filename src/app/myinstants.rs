@@ -13,6 +13,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::config::Config;
+use crate::download_probe::probe_download_start as probe_binary_start;
 use crate::download_validation::validate_download_as;
 
 const ORIGIN: &str = "https://www.myinstants.com";
@@ -103,6 +104,31 @@ pub fn download_directory(configured: Option<&str>) -> PathBuf {
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(default_download_directory)
+}
+
+pub fn probe_download_start() -> Result<String, String> {
+    if which::which("curl").is_err() {
+        return Err("curl is not installed".to_string());
+    }
+
+    let index_url = format!("{ORIGIN}/en/index/us/");
+    let index_html = fetch_text(&index_url).map_err(|error| error.to_string())?;
+    let page_url = sound_page_urls_from_index_html(&index_html)
+        .into_iter()
+        .next()
+        .ok_or_else(|| "MyInstants US index returned no sound pages".to_string())?;
+    let detail_html = fetch_text(&page_url).map_err(|error| error.to_string())?;
+    let media_url = media_url_from_detail(&detail_html)
+        .ok_or_else(|| "MyInstants sound page exposed no downloadable media URL".to_string())?;
+    let probe = probe_binary_start("MyInstants", &media_url, "mp3", None)?;
+    Ok(format!(
+        "MP3 header valid ({})",
+        if probe.content_type.is_empty() {
+            "content type not supplied"
+        } else {
+            probe.content_type.as_str()
+        }
+    ))
 }
 
 pub fn download(
