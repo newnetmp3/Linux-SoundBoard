@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
+use crate::download_probe::probe_download_start as probe_binary_start;
 use crate::download_validation::validate_download_as;
 use crate::myinstants::{DownloadProgress, DownloadReport};
 
@@ -85,6 +86,25 @@ pub enum PublicClipError {
 struct Anchor {
     href: String,
     text: String,
+}
+
+pub fn probe_download_start(source: PublicClipSource) -> Result<String, String> {
+    let (progress_tx, _progress_rx) = std::sync::mpsc::channel::<DownloadProgress>();
+    let cancelled = AtomicBool::new(false);
+    let clips = browse(source, "", 1, &progress_tx, &cancelled)
+        .map_err(|error| error.to_string())?;
+    let clip = clips
+        .first()
+        .ok_or_else(|| format!("{} browse returned no clips", source.name()))?;
+    let expected_extension = match source {
+        PublicClipSource::SoundButtonsCom | PublicClipSource::MyInstantsCom => "mp3",
+        PublicClipSource::MovieSoundClips => "wav",
+    };
+    let probe = probe_binary_start(source.name(), &clip.media_url, expected_extension, None)?;
+    Ok(format!(
+        ".{expected_extension} header valid for '{}' ({})",
+        clip.title, probe.content_type
+    ))
 }
 
 pub fn browse(
