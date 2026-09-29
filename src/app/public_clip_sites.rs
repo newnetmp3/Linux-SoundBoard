@@ -21,6 +21,9 @@ pub enum PublicClipSource {
     SoundButtonsCom,
     MovieSoundClips,
     MyInstantsCom,
+    OrangeFreeSounds,
+    SfxLibrary,
+    Soundimage,
 }
 
 impl PublicClipSource {
@@ -29,6 +32,9 @@ impl PublicClipSource {
             Self::SoundButtonsCom => "Sound-Buttons.com",
             Self::MovieSoundClips => "Movie Sound Clips",
             Self::MyInstantsCom => "My-Instants.com",
+            Self::OrangeFreeSounds => "Orange Free Sounds",
+            Self::SfxLibrary => "SFX Library",
+            Self::Soundimage => "Soundimage",
         }
     }
 
@@ -41,6 +47,9 @@ impl PublicClipSource {
             Self::SoundButtonsCom => "https://www.sound-buttons.com/popular-sound-buttons",
             Self::MovieSoundClips => "https://www.moviesoundclips.net/sound-effects.php",
             Self::MyInstantsCom => "https://my-instants.com/trending",
+            Self::OrangeFreeSounds => "https://orangefreesounds.com/sound-effects/",
+            Self::SfxLibrary => "https://www.sfxlibrary.com/",
+            Self::Soundimage => "https://soundimage.org/sfx-animals/",
         }
     }
 }
@@ -97,7 +106,11 @@ pub fn probe_download_start(source: PublicClipSource) -> Result<String, String> 
         .first()
         .ok_or_else(|| format!("{} browse returned no clips", source.name()))?;
     let expected_extension = match source {
-        PublicClipSource::SoundButtonsCom | PublicClipSource::MyInstantsCom => "mp3",
+        PublicClipSource::SoundButtonsCom
+        | PublicClipSource::MyInstantsCom
+        | PublicClipSource::OrangeFreeSounds
+        | PublicClipSource::SfxLibrary
+        | PublicClipSource::Soundimage => "mp3",
         PublicClipSource::MovieSoundClips => "wav",
     };
     let probe = probe_binary_start(source.name(), &clip.media_url, expected_extension, None)?;
@@ -129,6 +142,11 @@ pub fn browse(
         PublicClipSource::MyInstantsCom => {
             browse_my_instants_com(query, limit, progress, cancelled)?
         }
+        PublicClipSource::OrangeFreeSounds => {
+            browse_orange_free_sounds(query, limit, progress, cancelled)?
+        }
+        PublicClipSource::SfxLibrary => browse_sfx_library(query, limit, cancelled)?,
+        PublicClipSource::Soundimage => browse_soundimage(query, limit, cancelled)?,
     };
     clips.truncate(limit);
     Ok(clips)
@@ -459,6 +477,329 @@ fn browse_my_instants_com(
         });
     }
     Ok(clips)
+}
+
+fn browse_orange_free_sounds(
+    query: &str,
+    limit: usize,
+    progress: &Sender<DownloadProgress>,
+    cancelled: &AtomicBool,
+) -> Result<Vec<PublicClip>, PublicClipError> {
+    let index_url = PublicClipSource::OrangeFreeSounds.browse_url();
+    let html = fetch_text("Orange Free Sounds", index_url)?;
+    let mut candidates = Vec::<String>::new();
+    let mut seen_pages = HashSet::new();
+
+    for anchor in parse_anchors(&html) {
+        if !looks_like_orange_detail(&anchor.href) {
+            continue;
+        }
+        if !query.trim().is_empty() && !matches_query(&anchor.text, query) {
+            continue;
+        }
+        let Some(url) = absolute_url(index_url, &anchor.href) else {
+            continue;
+        };
+        if seen_pages.insert(url.clone()) {
+            candidates.push(url);
+        }
+        if candidates.len() >= limit.saturating_mul(4).max(20) {
+            break;
+        }
+    }
+
+    let mut clips = Vec::new();
+    let mut seen_media = HashSet::new();
+    for (index, detail_url) in candidates.into_iter().enumerate() {
+        if cancelled.load(Ordering::Relaxed) || clips.len() >= limit {
+            break;
+        }
+        send_progress(
+            progress,
+            &format!(
+                "Reading Orange Free Sounds pages… {}/{}",
+                index + 1,
+                limit.saturating_mul(4).max(20)
+            ),
+            index,
+            None,
+        );
+
+        let Ok(detail_html) = fetch_text("Orange Free Sounds", &detail_url) else {
+            continue;
+        };
+        let title = h1_text(&detail_html).unwrap_or_else(|| slug_title(&detail_url));
+        if !matches_query(&title, query) {
+            continue;
+        }
+        let Some(media_url) = first_audio_href(&detail_html, &detail_url, "mp3") else {
+            continue;
+        };
+        if !seen_media.insert(media_url.clone()) {
+            continue;
+        }
+
+        clips.push(PublicClip {
+            source_name: "Orange Free Sounds".to_string(),
+            source_url: detail_url.clone(),
+            title,
+            creator: extract_labeled_text(&detail_html, "Artist:"),
+            media_url: media_url.clone(),
+            preview_url: Some(media_url),
+            license: extract_labeled_text(&detail_html, "License:")
+                .or_else(|| extract_labeled_text(&detail_html, "Licence:")),
+            usage_terms: Some(
+                "License varies by sound. The source page is saved with each file; review its displayed license before reuse."
+                    .to_string(),
+            ),
+            attribution: None,
+            terms_url: Some(detail_url),
+        });
+    }
+
+    if clips.is_empty() {
+        return Err(PublicClipError::Parse {
+            provider: "Orange Free Sounds",
+            message: "no public MP3 sound-effect links were resolved".to_string(),
+        });
+    }
+    Ok(clips)
+}
+
+fn browse_sfx_library(
+    query: &str,
+    limit: usize,
+    cancelled: &AtomicBool,
+) -> Result<Vec<PublicClip>, PublicClipError> {
+    let root = PublicClipSource::SfxLibrary.browse_url();
+    let query = query.trim();
+    let page_url = if query.is_empty() {
+        root.to_string()
+    } else {
+        format!("{root}category/{}/", simple_slug(query))
+    };
+
+    let html = fetch_text("SFX Library", &page_url)
+        .or_else(|_| fetch_text("SFX Library", root))?;
+    let anchors = parse_anchors(&html);
+    let mut clips = Vec::new();
+    let mut seen = HashSet::new();
+
+    for (index, anchor) in anchors.iter().enumerate() {
+        if cancelled.load(Ordering::Relaxed) || clips.len() >= limit {
+            break;
+        }
+        let lower = anchor.href.to_ascii_lowercase();
+        if !lower.contains("/download/")
+            || !lower.contains("ext=mp3")
+            || !lower.contains("id=")
+        {
+            continue;
+        }
+
+        let Some(detail) = anchors[..index].iter().rev().take(12).find(|candidate| {
+            candidate.href.contains("/sound/")
+                && !candidate.text.trim().is_empty()
+                && matches_query(&candidate.text, query)
+        }) else {
+            continue;
+        };
+
+        let media_url = absolute_url(&page_url, &anchor.href).unwrap_or_else(|| anchor.href.clone());
+        if !seen.insert(media_url.clone()) {
+            continue;
+        }
+        let source_url =
+            absolute_url(&page_url, &detail.href).unwrap_or_else(|| detail.href.clone());
+        clips.push(PublicClip {
+            source_name: "SFX Library".to_string(),
+            source_url,
+            title: detail.text.clone(),
+            creator: Some("the3rdSequence".to_string()),
+            media_url: media_url.clone(),
+            preview_url: Some(media_url),
+            license: None,
+            usage_terms: Some(
+                "SFX Library describes its catalogue as free sound effects to use in projects. No per-sound license identifier is exposed by the listing."
+                    .to_string(),
+            ),
+            attribution: Some("SFXLibrary / the3rdSequence".to_string()),
+            terms_url: Some("https://www.sfxlibrary.com/".to_string()),
+        });
+    }
+
+    if clips.is_empty() {
+        return Err(PublicClipError::Parse {
+            provider: "SFX Library",
+            message: "no public MP3 download links were found".to_string(),
+        });
+    }
+    Ok(clips)
+}
+
+fn browse_soundimage(
+    query: &str,
+    limit: usize,
+    cancelled: &AtomicBool,
+) -> Result<Vec<PublicClip>, PublicClipError> {
+    const PAGES: &[&str] = &[
+        "https://soundimage.org/sfx-animals/",
+        "https://soundimage.org/sfx-scifi/",
+        "https://soundimage.org/sfx-weather/",
+        "https://soundimage.org/sfx-machines/",
+        "https://soundimage.org/sfx-vehicles/",
+    ];
+
+    let mut clips = Vec::new();
+    let mut seen = HashSet::new();
+    for page_url in PAGES {
+        if cancelled.load(Ordering::Relaxed) || clips.len() >= limit {
+            break;
+        }
+        let html = fetch_text("Soundimage", page_url)?;
+        for anchor in parse_anchors(&html) {
+            if cancelled.load(Ordering::Relaxed) || clips.len() >= limit {
+                break;
+            }
+            if extension_from_url(&anchor.href) != Some("mp3") {
+                continue;
+            }
+            let media_url =
+                absolute_url(page_url, &anchor.href).unwrap_or_else(|| anchor.href.clone());
+            if !seen.insert(media_url.clone()) {
+                continue;
+            }
+
+            let title = if anchor.text.trim().is_empty() || anchor.text.starts_with("http") {
+                filename_title(&media_url)
+            } else {
+                anchor.text.trim().to_string()
+            };
+            if !matches_query(&title, query) {
+                continue;
+            }
+
+            clips.push(PublicClip {
+                source_name: "Soundimage".to_string(),
+                source_url: (*page_url).to_string(),
+                title,
+                creator: Some("Eric Matyas".to_string()),
+                media_url: media_url.clone(),
+                preview_url: Some(media_url),
+                license: Some("Free use with attribution".to_string()),
+                usage_terms: Some(
+                    "Soundimage requires attribution for free use. See the attribution page for the required credit."
+                        .to_string(),
+                ),
+                attribution: Some("Sound effects by Eric Matyas — soundimage.org".to_string()),
+                terms_url: Some("https://soundimage.org/attribution-info/".to_string()),
+            });
+        }
+    }
+
+    if clips.is_empty() {
+        return Err(PublicClipError::Parse {
+            provider: "Soundimage",
+            message: "no public MP3 sound-effect links were found".to_string(),
+        });
+    }
+    Ok(clips)
+}
+
+fn looks_like_orange_detail(href: &str) -> bool {
+    let lower = href.to_ascii_lowercase();
+    if lower.contains("/wp-content/")
+        || lower.contains("/category/")
+        || lower.contains("/tag/")
+        || lower.contains("/author/")
+        || lower.contains("/feed/")
+    {
+        return false;
+    }
+    let path = if let Some(index) = lower.find("://") {
+        let rest = &lower[index + 3..];
+        rest.find('/').map(|offset| &rest[offset..]).unwrap_or("/")
+    } else {
+        lower.as_str()
+    };
+    let segment = path.trim_matches('/');
+    !segment.is_empty()
+        && !segment.contains('/')
+        && !matches!(
+            segment,
+            "sound-effects"
+                | "3d-sounds"
+                | "loops"
+                | "music"
+                | "sound-packs"
+                | "collections"
+                | "about"
+        )
+}
+
+fn first_audio_href(html: &str, page_url: &str, extension: &str) -> Option<String> {
+    parse_anchors(html).into_iter().find_map(|anchor| {
+        (extension_from_url(&anchor.href) == Some(extension))
+            .then(|| absolute_url(page_url, &anchor.href))
+            .flatten()
+    })
+}
+
+fn simple_slug(value: &str) -> String {
+    value
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+fn slug_title(url: &str) -> String {
+    url.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("online sound")
+        .replace('-', " ")
+}
+
+fn filename_title(url: &str) -> String {
+    let filename = url
+        .split('?')
+        .next()
+        .unwrap_or(url)
+        .rsplit('/')
+        .next()
+        .unwrap_or("online sound");
+    filename
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(filename)
+        .replace(['-', '_'], " ")
+}
+
+fn extract_labeled_text(html: &str, label: &str) -> Option<String> {
+    let index = html.find(label)?;
+    let rest = &html[index + label.len()..];
+    let end = rest
+        .find(['<', '\n', '\r'])
+        .unwrap_or(rest.len())
+        .min(300);
+    let value = decode_html_entities(&strip_tags(&rest[..end]))
+        .trim()
+        .trim_matches(':')
+        .trim()
+        .to_string();
+    (!value.is_empty()).then_some(value)
 }
 
 fn ensure_curl() -> Result<(), PublicClipError> {
@@ -826,6 +1167,34 @@ fn send_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn orange_detail_detection_rejects_categories_and_media() {
+        assert!(looks_like_orange_detail("/bruh-sound-effect/"));
+        assert!(!looks_like_orange_detail("/sound-effects/"));
+        assert!(!looks_like_orange_detail(
+            "/wp-content/uploads/2026/01/test.mp3"
+        ));
+    }
+
+    #[test]
+    fn sfx_library_download_endpoint_uses_mp3_query() {
+        let html = r#"
+            <a href="/sound/45/small%2Bexplosion/">Small explosion</a>
+            <a href="/download/?ext=mp3&id=45">.mp3</a>
+        "#;
+        let anchors = parse_anchors(html);
+        assert!(anchors[1].href.contains("ext=mp3"));
+        assert_eq!(anchors[0].text, "Small explosion");
+    }
+
+    #[test]
+    fn soundimage_filename_fallback_is_readable() {
+        assert_eq!(
+            filename_title("https://soundimage.org/wp-content/uploads/2023/05/Small-Dog-Barking.mp3"),
+            "Small Dog Barking"
+        );
+    }
 
     #[test]
     fn sound_buttons_parser_pairs_detail_and_mp3_download_links() {
