@@ -44,6 +44,8 @@ pub fn probe_download_start(
         "10",
         "--max-time",
         PROBE_TIMEOUT_SECS,
+        "--max-filesize",
+        "1048576",
         "--retry",
         "1",
         "--retry-delay",
