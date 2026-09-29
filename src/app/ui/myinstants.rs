@@ -31,6 +31,7 @@ const SOURCE_MY_INSTANTS_COM: u32 = 7;
 const SOURCE_ORANGE_FREE_SOUNDS: u32 = 8;
 const SOURCE_SFX_LIBRARY: u32 = 9;
 const SOURCE_SOUNDIMAGE: u32 = 10;
+const SOURCE_OTOLOGIC: u32 = 11;
 
 const SOURCE_LABELS: &[&str] = &[
     "MyInstants",
@@ -44,6 +45,7 @@ const SOURCE_LABELS: &[&str] = &[
     "Orange Free Sounds — direct MP3 library",
     "SFX Library — MP3 / WAV / OGG sound effects",
     "Soundimage — attributed MP3 sound effects",
+    "OtoLogic — CC BY 4.0 MP3 sound-effect packs",
 ];
 
 pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound_list: SoundList) {
@@ -148,6 +150,12 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
     ));
     options_stack.add_named(&kenney_box, Some("kenney"));
 
+    let otologic_box = GtkBox::new(Orientation::Vertical, 6);
+    otologic_box.append(&source_note(
+        "Downloads OtoLogic's public Assorted SFX MP3 ZIP packs, validates each archive, extracts the MP3 files, and preserves the CC BY 4.0 attribution requirement.",
+    ));
+    options_stack.add_named(&otologic_box, Some("otologic"));
+
     let public_clips_box = GtkBox::new(Orientation::Vertical, 6);
     public_clips_box.append(&source_note(
         "Browse the source's validated public full-audio links. The optional filter is matched against sound titles before downloading. Source metadata is saved beside every audio file.",
@@ -199,6 +207,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                 SOURCE_OPENGAMEART => "opengameart",
                 SOURCE_RPG_SOUNDBOARD => "rpg-soundboard",
                 SOURCE_KENNEY => "kenney",
+                SOURCE_OTOLOGIC => "otologic",
                 SOURCE_SOUND_BUTTONS_COM
                 | SOURCE_MOVIE_SOUND_CLIPS
                 | SOURCE_MY_INSTANTS_COM
@@ -649,6 +658,12 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                         )
                         .map_err(|error| error.to_string()),
                         SOURCE_KENNEY => online_audio::download_kenney_rpg_audio(
+                            &output_dir,
+                            progress_tx,
+                            cancelled,
+                        )
+                        .map_err(|error| error.to_string()),
+                        SOURCE_OTOLOGIC => online_audio::download_otologic_assorted(
                             &output_dir,
                             progress_tx,
                             cancelled,
