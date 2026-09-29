@@ -26,6 +26,47 @@ impl SourceHealth {
     }
 }
 
+pub fn probe_release_source(source_index: u32) -> SourceHealth {
+    let (name, result) = match source_index {
+        0 => ("MyInstants", myinstants::probe_download_start()),
+        1 => ("Tabletop Audio", online_audio::probe_tabletop_audio_start()),
+        2 => ("OpenGameArt", online_audio::probe_opengameart_start()),
+        3 => ("RPG Soundboard", online_audio::probe_rpg_soundboard_start()),
+        4 => ("Kenney", online_audio::probe_kenney_start()),
+        5 => (
+            "Sound-Buttons.com",
+            public_clip_sites::probe_download_start(PublicClipSource::SoundButtonsCom),
+        ),
+        6 => (
+            "Movie Sound Clips",
+            public_clip_sites::probe_download_start(PublicClipSource::MovieSoundClips),
+        ),
+        7 => (
+            "My-Instants.com",
+            public_clip_sites::probe_download_start(PublicClipSource::MyInstantsCom),
+        ),
+        8 => (
+            "Orange Free Sounds",
+            public_clip_sites::probe_download_start(PublicClipSource::OrangeFreeSounds),
+        ),
+        9 => (
+            "SFX Library",
+            public_clip_sites::probe_download_start(PublicClipSource::SfxLibrary),
+        ),
+        10 => (
+            "Soundimage",
+            public_clip_sites::probe_download_start(PublicClipSource::Soundimage),
+        ),
+        11 => ("OtoLogic", online_audio::probe_otologic_start()),
+        _ => (
+            "Unknown source",
+            Err(format!("release source index {source_index} is not registered")),
+        ),
+    };
+
+    source_health(source_index, name, result)
+}
+
 pub fn run_release() -> Vec<SourceHealth> {
     let mut results = Vec::with_capacity(12);
 
@@ -107,19 +148,27 @@ fn push_probe(
     name: &'static str,
     result: Result<String, String>,
 ) {
+    results.push(source_health(source_index, name, result));
+}
+
+fn source_health(
+    source_index: u32,
+    name: &'static str,
+    result: Result<String, String>,
+) -> SourceHealth {
     match result {
-        Ok(detail) => results.push(SourceHealth {
+        Ok(detail) => SourceHealth {
             source_index,
             name,
             status: SourceHealthStatus::Working,
             detail,
-        }),
-        Err(detail) => results.push(SourceHealth {
+        },
+        Err(detail) => SourceHealth {
             source_index,
             name,
             status: SourceHealthStatus::Failed,
             detail,
-        }),
+        },
     }
 }
 
