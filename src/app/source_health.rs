@@ -27,7 +27,7 @@ impl SourceHealth {
 }
 
 pub fn run_release() -> Vec<SourceHealth> {
-    let mut results = Vec::with_capacity(8);
+    let mut results = Vec::with_capacity(11);
 
     push_probe(&mut results, 0, "MyInstants", myinstants::probe_download_start());
     push_probe(
@@ -72,6 +72,24 @@ pub fn run_release() -> Vec<SourceHealth> {
         7,
         "My-Instants.com",
         public_clip_sites::probe_download_start(PublicClipSource::MyInstantsCom),
+    );
+    push_probe(
+        &mut results,
+        8,
+        "Orange Free Sounds",
+        public_clip_sites::probe_download_start(PublicClipSource::OrangeFreeSounds),
+    );
+    push_probe(
+        &mut results,
+        9,
+        "SFX Library",
+        public_clip_sites::probe_download_start(PublicClipSource::SfxLibrary),
+    );
+    push_probe(
+        &mut results,
+        10,
+        "Soundimage",
+        public_clip_sites::probe_download_start(PublicClipSource::Soundimage),
     );
 
     results
