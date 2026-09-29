@@ -24,6 +24,7 @@ pub enum PublicClipSource {
     OrangeFreeSounds,
     SfxLibrary,
     Soundimage,
+    FreeSoundsLibrary,
 }
 
 impl PublicClipSource {
@@ -35,6 +36,7 @@ impl PublicClipSource {
             Self::OrangeFreeSounds => "Orange Free Sounds",
             Self::SfxLibrary => "SFX Library",
             Self::Soundimage => "Soundimage",
+            Self::FreeSoundsLibrary => "Free Sounds Library",
         }
     }
 
@@ -50,6 +52,7 @@ impl PublicClipSource {
             Self::OrangeFreeSounds => "https://orangefreesounds.com/sound-effects/",
             Self::SfxLibrary => "https://www.sfxlibrary.com/",
             Self::Soundimage => "https://soundimage.org/sfx-animals/",
+            Self::FreeSoundsLibrary => "https://www.freesoundslibrary.com/cartoon-and-funny-sounds/",
         }
     }
 }
@@ -117,7 +120,8 @@ pub fn probe_download_start(source: PublicClipSource) -> Result<String, String> 
         | PublicClipSource::MyInstantsCom
         | PublicClipSource::OrangeFreeSounds
         | PublicClipSource::SfxLibrary
-        | PublicClipSource::Soundimage => "mp3",
+        | PublicClipSource::Soundimage
+        | PublicClipSource::FreeSoundsLibrary => "mp3",
         PublicClipSource::MovieSoundClips => "wav",
     };
 
@@ -165,6 +169,9 @@ pub fn browse(
         }
         PublicClipSource::SfxLibrary => browse_sfx_library(query, limit, cancelled)?,
         PublicClipSource::Soundimage => browse_soundimage(query, limit, cancelled)?,
+        PublicClipSource::FreeSoundsLibrary => {
+            browse_free_sounds_library(query, limit, progress, cancelled)?
+        }
     };
     clips.truncate(limit);
     Ok(clips)
@@ -495,6 +502,175 @@ fn browse_my_instants_com(
         });
     }
     Ok(clips)
+}
+
+fn browse_free_sounds_library(
+    query: &str,
+    limit: usize,
+    progress: &Sender<DownloadProgress>,
+    cancelled: &AtomicBool,
+) -> Result<Vec<PublicClip>, PublicClipError> {
+    const CATEGORY_PAGES: &[&str] = &[
+        "https://www.freesoundslibrary.com/cartoon-and-funny-sounds/",
+        "https://www.freesoundslibrary.com/game-and-interface-sounds/",
+        "https://www.freesoundslibrary.com/notification-sounds/",
+        "https://www.freesoundslibrary.com/human-sounds/",
+    ];
+
+    let mut detail_pages = Vec::<String>::new();
+    let mut seen_pages = HashSet::<String>::new();
+
+    for category_url in CATEGORY_PAGES {
+        if cancelled.load(Ordering::Relaxed) {
+            break;
+        }
+        let html = fetch_text("Free Sounds Library", category_url)?;
+        for anchor in parse_anchors(&html) {
+            if !looks_like_free_sounds_library_detail(&anchor.href) {
+                continue;
+            }
+            if !query.trim().is_empty()
+                && !anchor.text.trim().is_empty()
+                && !matches_query(&anchor.text, query)
+            {
+                continue;
+            }
+            let Some(url) = absolute_url(category_url, &anchor.href) else {
+                continue;
+            };
+            if seen_pages.insert(url.clone()) {
+                detail_pages.push(url);
+            }
+            if detail_pages.len() >= limit.saturating_mul(5).max(30) {
+                break;
+            }
+        }
+        if detail_pages.len() >= limit.saturating_mul(5).max(30) {
+            break;
+        }
+    }
+
+    let mut clips = Vec::new();
+    let mut seen_media = HashSet::new();
+    let total_candidates = detail_pages.len();
+
+    for (index, detail_url) in detail_pages.into_iter().enumerate() {
+        if cancelled.load(Ordering::Relaxed) || clips.len() >= limit {
+            break;
+        }
+        send_progress(
+            progress,
+            &format!(
+                "Reading Free Sounds Library pages… {}/{}",
+                index + 1,
+                total_candidates
+            ),
+            index,
+            Some(total_candidates.max(1)),
+        );
+
+        let Ok(html) = fetch_text("Free Sounds Library", &detail_url) else {
+            continue;
+        };
+        let title = h1_text(&html).unwrap_or_else(|| slug_title(&detail_url));
+        if !matches_query(&title, query) {
+            continue;
+        }
+        let Some(media_url) = first_audio_href(&html, &detail_url, "mp3") else {
+            continue;
+        };
+        if !seen_media.insert(media_url.clone()) {
+            continue;
+        }
+
+        let license = free_sounds_library_license(&html);
+        clips.push(PublicClip {
+            source_name: "Free Sounds Library".to_string(),
+            source_url: detail_url.clone(),
+            title,
+            creator: None,
+            media_url: media_url.clone(),
+            preview_url: Some(media_url),
+            license: license.clone(),
+            usage_terms: Some(match license.as_deref() {
+                Some("CC BY-NC 4.0") => {
+                    "Free for non-commercial use with attribution under CC BY-NC 4.0."
+                }
+                Some("CC BY 4.0") => {
+                    "Free for commercial or non-commercial use with attribution under CC BY 4.0."
+                }
+                _ => {
+                    "License varies by sound. Review the saved source page before reuse."
+                }
+            }
+            .to_string()),
+            attribution: Some("Free Sounds Library / source-page attribution required when stated".to_string()),
+            terms_url: Some(detail_url),
+        });
+    }
+
+    if clips.is_empty() {
+        return Err(PublicClipError::Parse {
+            provider: "Free Sounds Library",
+            message: "no public MP3 download links were resolved".to_string(),
+        });
+    }
+    Ok(clips)
+}
+
+fn looks_like_free_sounds_library_detail(href: &str) -> bool {
+    let lower = href.to_ascii_lowercase();
+    if lower.contains("/wp-content/")
+        || lower.contains("/category/")
+        || lower.contains("/tag/")
+        || lower.contains("/author/")
+        || lower.contains("/feed/")
+        || lower.contains("gumroad.com")
+        || lower.contains("payhip.com")
+        || lower.contains("creativecommons.org")
+    {
+        return false;
+    }
+
+    let path = if let Some(index) = lower.find("://") {
+        let rest = &lower[index + 3..];
+        rest.find('/').map(|offset| &rest[offset..]).unwrap_or("/")
+    } else {
+        lower.as_str()
+    };
+    let segment = path.trim_matches('/');
+    !segment.is_empty()
+        && !segment.contains('/')
+        && !matches!(
+            segment,
+            "cartoon-and-funny-sounds"
+                | "game-and-interface-sounds"
+                | "notification-sounds"
+                | "human-sounds"
+                | "ambient-sounds"
+                | "animal-sounds"
+                | "home-and-office-sounds"
+                | "instrumental-music"
+        )
+}
+
+fn free_sounds_library_license(html: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    if lower.contains("attribution-noncommercial 4.0")
+        || lower.contains("by-nc 4.0")
+    {
+        Some("CC BY-NC 4.0".to_string())
+    } else if lower.contains("attribution 4.0")
+        || lower.contains("by 4.0")
+    {
+        Some("CC BY 4.0".to_string())
+    } else if lower.contains("creative commons zero")
+        || lower.contains("cc0")
+    {
+        Some("CC0".to_string())
+    } else {
+        None
+    }
 }
 
 fn browse_orange_free_sounds(
@@ -1187,6 +1363,37 @@ fn send_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn free_sounds_library_detail_filter_rejects_categories_and_media() {
+        assert!(looks_like_free_sounds_library_detail(
+            "/water-drop-notification-sound/"
+        ));
+        assert!(!looks_like_free_sounds_library_detail(
+            "/cartoon-and-funny-sounds/"
+        ));
+        assert!(!looks_like_free_sounds_library_detail(
+            "/wp-content/uploads/2026/02/test.mp3"
+        ));
+    }
+
+    #[test]
+    fn free_sounds_library_license_detection_is_per_sound() {
+        assert_eq!(
+            free_sounds_library_license(
+                "<p>License: Attribution 4.0 International (CC BY 4.0)</p>"
+            )
+            .as_deref(),
+            Some("CC BY 4.0")
+        );
+        assert_eq!(
+            free_sounds_library_license(
+                "<p>Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)</p>"
+            )
+            .as_deref(),
+            Some("CC BY-NC 4.0")
+        );
+    }
 
     #[test]
     fn orange_detail_detection_rejects_categories_and_media() {
