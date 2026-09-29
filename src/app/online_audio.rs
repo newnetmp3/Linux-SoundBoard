@@ -217,13 +217,32 @@ struct FreesoundResult {
 }
 
 pub fn probe_tabletop_audio_start() -> Result<String, String> {
-    let html = fetch_text("Tabletop Audio", TABLETOP_HOME, None).map_err(|error| error.to_string())?;
+    const SAMPLE_COUNT: usize = 3;
+
+    let html =
+        fetch_text("Tabletop Audio", TABLETOP_HOME, None).map_err(|error| error.to_string())?;
     let tracks = parse_tabletop_tracks(&html);
-    let track = tracks
-        .first()
-        .ok_or_else(|| "Tabletop Audio catalogue exposed no downloadable tracks".to_string())?;
-    let probe = probe_binary_start("Tabletop Audio", &track.url, "mp3", None)?;
-    Ok(format!("MP3 header valid for '{}' ({})", track.title, probe.content_type))
+    if tracks.len() < SAMPLE_COUNT {
+        return Err(format!(
+            "Tabletop Audio catalogue exposed only {} track(s); expected at least {SAMPLE_COUNT}",
+            tracks.len()
+        ));
+    }
+
+    let mut content_types = Vec::new();
+    for track in tracks.iter().take(SAMPLE_COUNT) {
+        let probe = probe_binary_start("Tabletop Audio", &track.url, "mp3", None)?;
+        content_types.push(if probe.content_type.is_empty() {
+            "unknown".to_string()
+        } else {
+            probe.content_type
+        });
+    }
+
+    Ok(format!(
+        "{SAMPLE_COUNT} independent MP3 payload headers valid ({})",
+        content_types.join(", ")
+    ))
 }
 
 pub fn probe_opengameart_start() -> Result<String, String> {
