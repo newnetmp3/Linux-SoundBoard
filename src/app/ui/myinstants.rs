@@ -583,7 +583,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
             choose_directory_button.set_sensitive(false);
             use_default_directory_button.set_sensitive(false);
             progress.set_fraction(0.0);
-            status.set_label(&format!("Starting {source_name} download…"));
+            status.set_label(&format!("Checking {source_name} download endpoint…"));
 
             let (progress_tx, progress_rx) = mpsc::channel::<myinstants::DownloadProgress>();
             {
@@ -636,6 +636,14 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
             let dispatch = commands::dispatch_async_result(
                 "online_sound_download",
                 move || -> Result<DownloadReport, String> {
+                    let health = crate::source_health::probe_release_source(source_index);
+                    if health.status == crate::source_health::SourceHealthStatus::Failed {
+                        return Err(format!(
+                            "source preflight failed before download: {}",
+                            health.detail
+                        ));
+                    }
+
                     match source_index {
                         SOURCE_TABLETOP_AUDIO => online_audio::download_tabletop_audio(
                             tabletop_selection,
