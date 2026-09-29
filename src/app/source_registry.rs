@@ -63,7 +63,7 @@ pub const SOURCES: &[SourceCandidate] = &[
     SourceCandidate { id: 45, name: "Uppbeat", url: "https://uppbeat.io/sfx", support: SourceSupport::Candidate },
     SourceCandidate { id: 46, name: "SoundsCrate", url: "https://soundscrate.com/", support: SourceSupport::Candidate },
     SourceCandidate { id: 47, name: "Sound Effect Lab", url: "https://soundeffect-lab.info/", support: SourceSupport::Candidate },
-    SourceCandidate { id: 48, name: "OtoLogic", url: "https://otologic.jp/", support: SourceSupport::Candidate },
+    SourceCandidate { id: 48, name: "OtoLogic", url: "https://otologic.jp/", support: SourceSupport::ReleaseReady },
     SourceCandidate { id: 49, name: "TK's Free Sound FX", url: "https://taira-komori.net/freesounden.html", support: SourceSupport::Candidate },
     SourceCandidate { id: 50, name: "Maou Audio", url: "https://maou.audio/", support: SourceSupport::Candidate },
     SourceCandidate { id: 51, name: "Soundsnap", url: "https://www.soundsnap.com/", support: SourceSupport::Candidate },
