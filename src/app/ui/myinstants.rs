@@ -8,7 +8,7 @@ use std::time::Duration;
 use gtk4::prelude::*;
 use gtk4::{
     Adjustment, Align, Box as GtkBox, Button, CheckButton, DropDown, Entry, Label, Orientation,
-    PasswordEntry, ProgressBar, ScrolledWindow, SpinButton, Stack, Window,
+    ProgressBar, ScrolledWindow, SpinButton, Stack, Window,
 };
 
 use crate::app_state::AppState;
@@ -23,21 +23,17 @@ use super::sound_list::SoundList;
 const SOURCE_MYINSTANTS: u32 = 0;
 const SOURCE_TABLETOP_AUDIO: u32 = 1;
 const SOURCE_OPENGAMEART: u32 = 2;
-const SOURCE_FREESOUND: u32 = 3;
-const SOURCE_RPG_SOUNDBOARD: u32 = 4;
-const SOURCE_AMBIENT_MIXER: u32 = 5;
-const SOURCE_KENNEY: u32 = 6;
-const SOURCE_SOUND_BUTTONS_COM: u32 = 7;
-const SOURCE_MOVIE_SOUND_CLIPS: u32 = 8;
-const SOURCE_MY_INSTANTS_COM: u32 = 9;
+const SOURCE_RPG_SOUNDBOARD: u32 = 3;
+const SOURCE_KENNEY: u32 = 4;
+const SOURCE_SOUND_BUTTONS_COM: u32 = 5;
+const SOURCE_MOVIE_SOUND_CLIPS: u32 = 6;
+const SOURCE_MY_INSTANTS_COM: u32 = 7;
 
 const SOURCE_LABELS: &[&str] = &[
     "MyInstants",
     "Tabletop Audio — D&D / fantasy ambience",
     "OpenGameArt — fantasy/RPG sound packs",
-    "Freesound — original files only",
     "RPG Soundboard — free Medieval Fantasy pack",
-    "Ambient Mixer — D&D / fantasy atmospheres",
     "Kenney — RPG Audio (50 CC0 sounds)",
     "Sound-Buttons.com — memes / reactions",
     "Movie Sound Clips — free sound-effects library",
@@ -60,7 +56,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
     content.set_margin_start(18);
     content.set_margin_end(18);
 
-    let working_sources = source_registry::working_sources().collect::<Vec<_>>();
+    let working_sources = source_registry::release_sources().collect::<Vec<_>>();
     let intro = Label::new(Some(&format!(
         "Download local copies from tested online sound libraries and import supported audio directly into the selected soundboard tab. {} working integrations are active from {} tracked candidate sites.",
         working_sources.len(),
@@ -130,42 +126,6 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
     opengameart_box.append(&opengameart_pack);
     options_stack.add_named(&opengameart_box, Some("opengameart"));
 
-    let freesound_box = GtkBox::new(Orientation::Vertical, 6);
-    freesound_box.append(&source_note(
-        "Original Freesound uploads only — no previews. Freesound requires an OAuth2 access token for original-file downloads.",
-    ));
-    let freesound_help = Label::new(None);
-    freesound_help.set_xalign(0.0);
-    freesound_help.set_wrap(true);
-    freesound_help.set_markup(
-        "Create Freesound API credentials and authorize your account using the <a href=\"https://freesound.org/docs/api/authentication.html\">official OAuth2 instructions</a>, then paste the temporary access token below.",
-    );
-    freesound_box.append(&freesound_help);
-
-    let freesound_query = Entry::builder()
-        .placeholder_text("Search, e.g. dungeon tavern dragon sword magic")
-        .hexpand(true)
-        .build();
-    freesound_box.append(&freesound_query);
-
-    let freesound_token = PasswordEntry::builder()
-        .placeholder_text("OAuth2 access token")
-        .show_peek_icon(true)
-        .hexpand(true)
-        .build();
-    freesound_box.append(&freesound_token);
-
-    let limit_row = GtkBox::new(Orientation::Horizontal, 8);
-    let limit_label = Label::new(Some("Maximum originals"));
-    limit_label.set_xalign(0.0);
-    limit_label.set_hexpand(true);
-    limit_row.append(&limit_label);
-    let limit_adjustment = Adjustment::new(25.0, 1.0, 150.0, 1.0, 10.0, 0.0);
-    let freesound_limit = SpinButton::new(Some(&limit_adjustment), 1.0, 0);
-    limit_row.append(&freesound_limit);
-    freesound_box.append(&limit_row);
-    options_stack.add_named(&freesound_box, Some("freesound"));
-
     let rpg_soundboard_box = GtkBox::new(Orientation::Vertical, 6);
     rpg_soundboard_box.append(&source_note(
         "Downloads RPG Soundboard's publicly offered Medieval Fantasy starter soundboard, keeps the .rpsb archive locally, extracts its bundled audio, and imports supported files.",
@@ -220,20 +180,6 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
 
     options_stack.add_named(&public_clips_box, Some("public-clips"));
 
-    let ambient_box = GtkBox::new(Orientation::Vertical, 6);
-    ambient_box.append(&source_note(
-        "Curated D&D/fantasy atmospheres whose pages expose a Download audio action. License/source notes are stored beside the local files.",
-    ));
-    let ambient_labels = online_audio::AMBIENT_MIXER_CHOICES
-        .iter()
-        .map(|(_, label, _)| *label)
-        .collect::<Vec<_>>();
-    let ambient_choice = DropDown::from_strings(&ambient_labels);
-    ambient_choice.set_selected(0);
-    ambient_choice.set_hexpand(true);
-    ambient_box.append(&ambient_choice);
-    options_stack.add_named(&ambient_box, Some("ambient-mixer"));
-
     options_stack.set_visible_child_name("myinstants");
     content.append(&options_stack);
 
@@ -245,9 +191,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
             let name = match source.selected() {
                 SOURCE_TABLETOP_AUDIO => "tabletop",
                 SOURCE_OPENGAMEART => "opengameart",
-                SOURCE_FREESOUND => "freesound",
                 SOURCE_RPG_SOUNDBOARD => "rpg-soundboard",
-                SOURCE_AMBIENT_MIXER => "ambient-mixer",
                 SOURCE_KENNEY => "kenney",
                 SOURCE_SOUND_BUTTONS_COM
                 | SOURCE_MOVIE_SOUND_CLIPS
@@ -532,10 +476,6 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
         let country = country.clone();
         let tabletop_collection = tabletop_collection.clone();
         let opengameart_pack = opengameart_pack.clone();
-        let freesound_query = freesound_query.clone();
-        let freesound_token = freesound_token.clone();
-        let freesound_limit = freesound_limit.clone();
-        let ambient_choice = ambient_choice.clone();
         let public_results = Rc::clone(&public_results);
         let progress = progress.clone();
         let status = status.clone();
@@ -576,13 +516,6 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
             let opengameart_selection = online_audio::OPENGAMEART_PACKS
                 .get(opengameart_pack.selected() as usize)
                 .map(|(id, _)| (*id).to_string())
-                .unwrap_or_else(|| "all".to_string());
-            let freesound_search = freesound_query.text().to_string();
-            let freesound_oauth = freesound_token.text().to_string();
-            let freesound_count = freesound_limit.value_as_int().max(1) as usize;
-            let ambient_selection = online_audio::AMBIENT_MIXER_CHOICES
-                .get(ambient_choice.selected() as usize)
-                .map(|(id, _, _)| (*id).to_string())
                 .unwrap_or_else(|| "all".to_string());
             let selected_public_clips = if matches!(
                 source_index,
@@ -687,23 +620,7 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                             cancelled,
                         )
                         .map_err(|error| error.to_string()),
-                        SOURCE_FREESOUND => online_audio::download_freesound_originals(
-                            &freesound_search,
-                            &freesound_oauth,
-                            freesound_count,
-                            &output_dir,
-                            progress_tx,
-                            cancelled,
-                        )
-                        .map_err(|error| error.to_string()),
                         SOURCE_RPG_SOUNDBOARD => online_audio::download_rpg_soundboard_pack(
-                            &output_dir,
-                            progress_tx,
-                            cancelled,
-                        )
-                        .map_err(|error| error.to_string()),
-                        SOURCE_AMBIENT_MIXER => online_audio::download_ambient_mixer(
-                            &ambient_selection,
                             &output_dir,
                             progress_tx,
                             cancelled,
