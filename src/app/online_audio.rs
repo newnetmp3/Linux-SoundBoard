@@ -20,6 +20,7 @@ const TABLETOP_AUDIO_ROOT: &str = "https://sounds.tabletopaudio.com";
 const FREESOUND_SEARCH: &str = "https://freesound.org/apiv2/search/text/";
 const RPG_SOUNDBOARD_HOME: &str = "https://rpgsoundboard.com/";
 const KENNEY_RPG_AUDIO_PAGE: &str = "https://kenney.nl/assets/rpg-audio";
+const OTOLOGIC_ASSORTED_PAGE: &str = "https://otologic.jp/free/se/assorted-se01.html";
 const TABLETOP_WORKERS: usize = 3;
 const FREESOUND_WORKERS: usize = 4;
 const MAX_FILE_STEM_BYTES: usize = 180;
@@ -283,6 +284,26 @@ pub fn probe_kenney_start() -> Result<String, String> {
         .ok_or_else(|| "Kenney RPG Audio ZIP URL could not be resolved".to_string())?;
     let probe = probe_binary_start("Kenney", &url, "zip", None)?;
     Ok(format!("ZIP header valid ({})", probe.content_type))
+}
+
+pub fn probe_otologic_start() -> Result<String, String> {
+    let html =
+        fetch_text("OtoLogic", OTOLOGIC_ASSORTED_PAGE, None).map_err(|error| error.to_string())?;
+    let urls = otologic_archive_urls(&html);
+    if urls.len() < 3 {
+        return Err(format!(
+            "OtoLogic assorted page exposed only {} MP3 pack archive(s); expected at least 3",
+            urls.len()
+        ));
+    }
+
+    for url in urls.iter().take(3) {
+        probe_binary_start("OtoLogic", url, "zip", None)?;
+    }
+    Ok(format!(
+        "3 independent ZIP headers valid; {} assorted MP3 packs discovered",
+        urls.len()
+    ))
 }
 
 pub fn probe_ambient_mixer_start() -> Result<String, String> {
@@ -726,6 +747,86 @@ Contains 50 RPG/fantasy/adventure audio files. Attribution to Kenney or Kenney.n
         failed: 0,
         cancelled: false,
     })
+}
+
+pub fn download_otologic_assorted(
+    output_root: &Path,
+    progress: Sender<DownloadProgress>,
+    cancelled: Arc<AtomicBool>,
+) -> Result<DownloadReport, OnlineAudioError> {
+    ensure_curl()?;
+    ensure_unzip()?;
+
+    let output_dir = output_root.join("OtoLogic").join("Assorted SFX");
+    fs::create_dir_all(&output_dir).map_err(OnlineAudioError::CreateDirectory)?;
+
+    send_progress(&progress, "Reading OtoLogic assorted SFX packs…", 0, None);
+    let html = fetch_text("OtoLogic", OTOLOGIC_ASSORTED_PAGE, None)?;
+    let urls = otologic_archive_urls(&html);
+    if urls.is_empty() {
+        return Err(OnlineAudioError::Parse {
+            provider: "OtoLogic",
+            message: "no MP3 ZIP packs were found on the assorted SFX page".to_string(),
+        });
+    }
+
+    let total = urls.len();
+    let mut report = DownloadReport::default();
+
+    for (index, url) in urls.iter().enumerate() {
+        if cancelled.load(Ordering::Relaxed) {
+            report.cancelled = true;
+            break;
+        }
+
+        let filename = url
+            .split('?')
+            .next()
+            .unwrap_or(url)
+            .rsplit('/')
+            .next()
+            .filter(|name| !name.is_empty())
+            .unwrap_or("otologic-sfx.zip");
+        let archive_path = output_dir.join(filename);
+        send_progress(
+            &progress,
+            &format!("Downloading OtoLogic pack {}/{}: {}", index + 1, total, filename),
+            index,
+            Some(total),
+        );
+
+        match download_binary("OtoLogic", url, &archive_path, None) {
+            Ok(true) => report.downloaded += 1,
+            Ok(false) => report.reused += 1,
+            Err(error) => {
+                report.failed += 1;
+                log::warn!("OtoLogic pack download failed ({url}): {error}");
+                continue;
+            }
+        }
+
+        let stem = archive_path
+            .file_stem()
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_else(|| format!("pack-{}", index + 1));
+        let extracted_dir = output_dir.join("audio").join(sanitize_file_stem(&stem));
+        fs::create_dir_all(&extracted_dir).map_err(OnlineAudioError::CreateDirectory)?;
+        extract_zip(&archive_path, &extracted_dir)?;
+        report.paths.extend(collect_audio_files(&extracted_dir));
+    }
+
+    report.paths.sort();
+    report.paths.dedup();
+    fs::write(
+        output_dir.join("_OtoLogic_LICENSE.txt"),
+        "OtoLogic free sound effects — Assorted SFX\n\
+Source: https://otologic.jp/free/se/assorted-se01.html\n\
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)\n\
+Free distribution format: MP3. Preserve OtoLogic attribution when using these sounds.\n",
+    )
+    .map_err(OnlineAudioError::WriteMetadata)?;
+
+    Ok(report)
 }
 
 pub fn download_ambient_mixer(
@@ -1205,6 +1306,20 @@ fn normalized_audio_extension(file_type: &str) -> Option<&'static str> {
     }
 }
 
+fn otologic_archive_urls(html: &str) -> Vec<String> {
+    let mut urls = quoted_attribute_values(html, "href")
+        .into_iter()
+        .filter(|href| {
+            let lower = href.to_ascii_lowercase();
+            lower.contains("mp3-zip") && lower.ends_with(".zip")
+        })
+        .filter_map(|href| absolute_url(OTOLOGIC_ASSORTED_PAGE, &href))
+        .collect::<Vec<_>>();
+    urls.sort();
+    urls.dedup();
+    urls
+}
+
 fn find_rpg_soundboard_pack_href(html: &str) -> Option<String> {
     if let Some(href) = find_href_containing(html, ".rpsb") {
         return Some(href);
@@ -1487,6 +1602,19 @@ mod tests {
             absolute_url("https://example.com/path/page", "file.mp3").as_deref(),
             Some("https://example.com/path/file.mp3")
         );
+    }
+
+    #[test]
+    fn finds_otologic_mp3_zip_archives() {
+        let html = r#"
+            <a href="/sounds/se/mp3-zip/Assorted_SE12-mp3.zip">MP3</a>
+            <a href="/sounds/se/mp3-zip/Assorted_SE11-mp3.zip">MP3</a>
+            <a href="/sounds/se/wav/paid.wav">WAV</a>
+        "#;
+        let urls = otologic_archive_urls(html);
+        assert_eq!(urls.len(), 2);
+        assert!(urls[0].ends_with(".zip"));
+        assert!(urls[1].ends_with(".zip"));
     }
 
     #[test]
