@@ -791,7 +791,9 @@ fn extract_labeled_text(html: &str, label: &str) -> Option<String> {
     let index = html.find(label)?;
     let rest = &html[index + label.len()..];
     let end = rest
-        .find(['<', '\n', '\r'])
+        .char_indices()
+        .find(|(_, character)| matches!(character, '<' | '\n' | '\r'))
+        .map(|(index, _)| index)
         .unwrap_or(rest.len())
         .min(300);
     let value = decode_html_entities(&strip_tags(&rest[..end]))
