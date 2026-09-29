@@ -1,7 +1,9 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceSupport {
-    Working,
+    ReleaseReady,
     Candidate,
+    ExtraStepsRequired,
+    Broken,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -13,7 +15,7 @@ pub struct SourceCandidate {
 }
 
 pub const SOURCES: &[SourceCandidate] = &[
-    SourceCandidate { id: 1, name: "Myinstants", url: "https://www.myinstants.com/", support: SourceSupport::Working },
+    SourceCandidate { id: 1, name: "Myinstants", url: "https://www.myinstants.com/", support: SourceSupport::ReleaseReady },
     SourceCandidate { id: 2, name: "Voicy", url: "https://www.voicy.network/meme-soundboard", support: SourceSupport::Candidate },
     SourceCandidate { id: 3, name: "Voicemod Tuna", url: "https://tuna.voicemod.net/", support: SourceSupport::Candidate },
     SourceCandidate { id: 4, name: "Soundboards.gg", url: "https://soundboards.gg/", support: SourceSupport::Candidate },
@@ -21,19 +23,19 @@ pub const SOURCES: &[SourceCandidate] = &[
     SourceCandidate { id: 6, name: "Soundboard.com", url: "https://www.soundboard.com/", support: SourceSupport::Candidate },
     SourceCandidate { id: 7, name: "BoardSounds", url: "https://boardsounds.com/", support: SourceSupport::Candidate },
     SourceCandidate { id: 8, name: "TapSounds", url: "https://tapsounds.com/", support: SourceSupport::Candidate },
-    SourceCandidate { id: 9, name: "Sound-Buttons.com", url: "https://www.sound-buttons.com/", support: SourceSupport::Working },
+    SourceCandidate { id: 9, name: "Sound-Buttons.com", url: "https://www.sound-buttons.com/", support: SourceSupport::ReleaseReady },
     SourceCandidate { id: 10, name: "SoundButtons.io", url: "https://soundbuttons.io/", support: SourceSupport::Candidate },
     SourceCandidate { id: 11, name: "SoundButtons.net", url: "https://soundbuttons.net/", support: SourceSupport::Candidate },
     SourceCandidate { id: 12, name: "SoundButtonsWorld", url: "https://soundbuttonsworld.com/", support: SourceSupport::Candidate },
     SourceCandidate { id: 13, name: "Meme Instants", url: "https://memeinstants.com/", support: SourceSupport::Candidate },
     SourceCandidate { id: 14, name: "Realm of Darkness", url: "https://www.realmofdarkness.net/sb/", support: SourceSupport::Candidate },
     SourceCandidate { id: 15, name: "WavSource", url: "https://www.wavsource.com/", support: SourceSupport::Candidate },
-    SourceCandidate { id: 16, name: "Movie Sound Clips", url: "https://www.moviesoundclips.net/", support: SourceSupport::Working },
+    SourceCandidate { id: 16, name: "Movie Sound Clips", url: "https://www.moviesoundclips.net/", support: SourceSupport::ReleaseReady },
     SourceCandidate { id: 17, name: "Zedge", url: "https://www.zedge.net/", support: SourceSupport::Candidate },
     SourceCandidate { id: 18, name: "Myinstants.net", url: "https://myinstants.net/", support: SourceSupport::Candidate },
     SourceCandidate { id: 19, name: "Myinstants.app", url: "https://myinstants.app/memes-soundboard", support: SourceSupport::Candidate },
-    SourceCandidate { id: 20, name: "My-Instants.com", url: "https://my-instants.com/", support: SourceSupport::Working },
-    SourceCandidate { id: 21, name: "Freesound", url: "https://freesound.org/", support: SourceSupport::Working },
+    SourceCandidate { id: 20, name: "My-Instants.com", url: "https://my-instants.com/", support: SourceSupport::ReleaseReady },
+    SourceCandidate { id: 21, name: "Freesound", url: "https://freesound.org/", support: SourceSupport::ExtraStepsRequired },
     SourceCandidate { id: 22, name: "Pixabay Sound Effects", url: "https://pixabay.com/sound-effects/", support: SourceSupport::Candidate },
     SourceCandidate { id: 23, name: "Mixkit", url: "https://mixkit.co/free-sound-effects/", support: SourceSupport::Candidate },
     SourceCandidate { id: 24, name: "Zapsplat", url: "https://www.zapsplat.com/", support: SourceSupport::Candidate },
@@ -81,8 +83,8 @@ pub const SOURCES: &[SourceCandidate] = &[
     SourceCandidate { id: 66, name: "HookSounds", url: "https://www.hooksounds.com/sound-effects/", support: SourceSupport::Candidate },
     SourceCandidate { id: 67, name: "TunePocket", url: "https://www.tunepocket.com/sound-effects/", support: SourceSupport::Candidate },
     SourceCandidate { id: 68, name: "Magnific formerly Videvo", url: "https://www.magnific.com/audio/sound-effects", support: SourceSupport::Candidate },
-    SourceCandidate { id: 69, name: "OpenGameArt", url: "https://opengameart.org/", support: SourceSupport::Working },
-    SourceCandidate { id: 70, name: "Kenney", url: "https://kenney.nl/assets", support: SourceSupport::Working },
+    SourceCandidate { id: 69, name: "OpenGameArt", url: "https://opengameart.org/", support: SourceSupport::ReleaseReady },
+    SourceCandidate { id: 70, name: "Kenney", url: "https://kenney.nl/assets", support: SourceSupport::ReleaseReady },
     SourceCandidate { id: 71, name: "itch.io", url: "https://itch.io/game-assets/tag-sound-effects", support: SourceSupport::Candidate },
     SourceCandidate { id: 72, name: "The Sounds Resource", url: "https://www.sounds-resource.com/", support: SourceSupport::Candidate },
     SourceCandidate { id: 73, name: "GameDev Market", url: "https://www.gamedevmarket.net/category/audio/sound-fx", support: SourceSupport::Candidate },
@@ -111,8 +113,8 @@ pub const SOURCES: &[SourceCandidate] = &[
     SourceCandidate { id: 96, name: "PMSFX", url: "https://www.pmsfx.com/", support: SourceSupport::Candidate },
     SourceCandidate { id: 97, name: "Glitchedtones", url: "https://glitchedtones.com/", support: SourceSupport::Candidate },
     SourceCandidate { id: 98, name: "Sample Focus", url: "https://samplefocus.com/", support: SourceSupport::Candidate },
-    SourceCandidate { id: 99, name: "Tabletop Audio", url: "https://tabletopaudio.com/", support: SourceSupport::Working },
-    SourceCandidate { id: 100, name: "Ambient Mixer", url: "https://www.ambient-mixer.com/", support: SourceSupport::Candidate },
+    SourceCandidate { id: 99, name: "Tabletop Audio", url: "https://tabletopaudio.com/", support: SourceSupport::ReleaseReady },
+    SourceCandidate { id: 100, name: "Ambient Mixer", url: "https://www.ambient-mixer.com/", support: SourceSupport::ExtraStepsRequired },
 ];
 
 pub fn working_sources() -> impl Iterator<Item = &'static SourceCandidate> {
