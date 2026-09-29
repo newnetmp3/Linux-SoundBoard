@@ -28,6 +28,9 @@ const SOURCE_KENNEY: u32 = 4;
 const SOURCE_SOUND_BUTTONS_COM: u32 = 5;
 const SOURCE_MOVIE_SOUND_CLIPS: u32 = 6;
 const SOURCE_MY_INSTANTS_COM: u32 = 7;
+const SOURCE_ORANGE_FREE_SOUNDS: u32 = 8;
+const SOURCE_SFX_LIBRARY: u32 = 9;
+const SOURCE_SOUNDIMAGE: u32 = 10;
 
 const SOURCE_LABELS: &[&str] = &[
     "MyInstants",
@@ -38,6 +41,9 @@ const SOURCE_LABELS: &[&str] = &[
     "Sound-Buttons.com — memes / reactions",
     "Movie Sound Clips — free sound-effects library",
     "My-Instants.com — trending memes / reactions",
+    "Orange Free Sounds — direct MP3 library",
+    "SFX Library — MP3 / WAV / OGG sound effects",
+    "Soundimage — attributed MP3 sound effects",
 ];
 
 pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound_list: SoundList) {
@@ -195,7 +201,10 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                 SOURCE_KENNEY => "kenney",
                 SOURCE_SOUND_BUTTONS_COM
                 | SOURCE_MOVIE_SOUND_CLIPS
-                | SOURCE_MY_INSTANTS_COM => "public-clips",
+                | SOURCE_MY_INSTANTS_COM
+                | SOURCE_ORANGE_FREE_SOUNDS
+                | SOURCE_SFX_LIBRARY
+                | SOURCE_SOUNDIMAGE => "public-clips",
                 _ => "myinstants",
             };
             options_stack.set_visible_child_name(name);
@@ -218,6 +227,9 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                 SOURCE_SOUND_BUTTONS_COM => PublicClipSource::SoundButtonsCom,
                 SOURCE_MOVIE_SOUND_CLIPS => PublicClipSource::MovieSoundClips,
                 SOURCE_MY_INSTANTS_COM => PublicClipSource::MyInstantsCom,
+                SOURCE_ORANGE_FREE_SOUNDS => PublicClipSource::OrangeFreeSounds,
+                SOURCE_SFX_LIBRARY => PublicClipSource::SfxLibrary,
+                SOURCE_SOUNDIMAGE => PublicClipSource::Soundimage,
                 _ => return,
             };
             button.set_sensitive(false);
@@ -519,7 +531,12 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                 .unwrap_or_else(|| "all".to_string());
             let selected_public_clips = if matches!(
                 source_index,
-                SOURCE_SOUND_BUTTONS_COM | SOURCE_MOVIE_SOUND_CLIPS | SOURCE_MY_INSTANTS_COM
+                SOURCE_SOUND_BUTTONS_COM
+                    | SOURCE_MOVIE_SOUND_CLIPS
+                    | SOURCE_MY_INSTANTS_COM
+                    | SOURCE_ORANGE_FREE_SOUNDS
+                    | SOURCE_SFX_LIBRARY
+                    | SOURCE_SOUNDIMAGE
             ) {
                 public_results
                     .borrow()
@@ -532,7 +549,12 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
             };
             if matches!(
                 source_index,
-                SOURCE_SOUND_BUTTONS_COM | SOURCE_MOVIE_SOUND_CLIPS | SOURCE_MY_INSTANTS_COM
+                SOURCE_SOUND_BUTTONS_COM
+                    | SOURCE_MOVIE_SOUND_CLIPS
+                    | SOURCE_MY_INSTANTS_COM
+                    | SOURCE_ORANGE_FREE_SOUNDS
+                    | SOURCE_SFX_LIBRARY
+                    | SOURCE_SOUNDIMAGE
             ) && selected_public_clips.is_empty()
             {
                 status.set_label(
@@ -634,11 +656,17 @@ pub(super) fn show_downloader(parent: &gtk4::Window, state: Arc<AppState>, sound
                         .map_err(|error| error.to_string()),
                         SOURCE_SOUND_BUTTONS_COM
                         | SOURCE_MOVIE_SOUND_CLIPS
-                        | SOURCE_MY_INSTANTS_COM => {
+                        | SOURCE_MY_INSTANTS_COM
+                        | SOURCE_ORANGE_FREE_SOUNDS
+                        | SOURCE_SFX_LIBRARY
+                        | SOURCE_SOUNDIMAGE => {
                             let public_source = match source_index {
                                 SOURCE_SOUND_BUTTONS_COM => PublicClipSource::SoundButtonsCom,
                                 SOURCE_MOVIE_SOUND_CLIPS => PublicClipSource::MovieSoundClips,
-                                _ => PublicClipSource::MyInstantsCom,
+                                SOURCE_MY_INSTANTS_COM => PublicClipSource::MyInstantsCom,
+                                SOURCE_ORANGE_FREE_SOUNDS => PublicClipSource::OrangeFreeSounds,
+                                SOURCE_SFX_LIBRARY => PublicClipSource::SfxLibrary,
+                                _ => PublicClipSource::Soundimage,
                             };
                             public_clip_sites::download_selected(
                                 public_source,
