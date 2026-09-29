@@ -5,7 +5,6 @@ use crate::public_clip_sites::{self, PublicClipSource};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceHealthStatus {
     Working,
-    RequiresCredentials,
     Failed,
 }
 
@@ -21,15 +20,14 @@ impl SourceHealth {
     pub fn display_line(&self) -> String {
         let icon = match self.status {
             SourceHealthStatus::Working => "✓",
-            SourceHealthStatus::RequiresCredentials => "🔐",
             SourceHealthStatus::Failed => "✗",
         };
         format!("{icon} {} — {}", self.name, self.detail)
     }
 }
 
-pub fn run_all(freesound_token: &str) -> Vec<SourceHealth> {
-    let mut results = Vec::with_capacity(10);
+pub fn run_release() -> Vec<SourceHealth> {
+    let mut results = Vec::with_capacity(8);
 
     push_probe(&mut results, 0, "MyInstants", myinstants::probe_download_start());
     push_probe(
@@ -45,55 +43,33 @@ pub fn run_all(freesound_token: &str) -> Vec<SourceHealth> {
         online_audio::probe_opengameart_start(),
     );
 
-    if freesound_token.trim().is_empty() {
-        results.push(SourceHealth {
-            source_index: 3,
-            name: "Freesound",
-            status: SourceHealthStatus::RequiresCredentials,
-            detail: "OAuth2 token required to verify an original-file download".to_string(),
-        });
-    } else {
-        push_probe(
-            &mut results,
-            3,
-            "Freesound",
-            online_audio::probe_freesound_start(freesound_token),
-        );
-    }
-
     push_probe(
         &mut results,
-        4,
+        3,
         "RPG Soundboard",
         online_audio::probe_rpg_soundboard_start(),
     );
     push_probe(
         &mut results,
-        5,
-        "Ambient Mixer",
-        online_audio::probe_ambient_mixer_start(),
-    );
-    push_probe(
-        &mut results,
-        6,
+        4,
         "Kenney",
         online_audio::probe_kenney_start(),
     );
     push_probe(
         &mut results,
-        7,
+        5,
         "Sound-Buttons.com",
         public_clip_sites::probe_download_start(PublicClipSource::SoundButtonsCom),
     );
     push_probe(
         &mut results,
-        8,
+        6,
         "Movie Sound Clips",
         public_clip_sites::probe_download_start(PublicClipSource::MovieSoundClips),
     );
     push_probe(
         &mut results,
-        9,
+        7,
         "My-Instants.com",
         public_clip_sites::probe_download_start(PublicClipSource::MyInstantsCom),
     );
