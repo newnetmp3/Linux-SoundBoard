@@ -98,13 +98,20 @@ struct Anchor {
 }
 
 pub fn probe_download_start(source: PublicClipSource) -> Result<String, String> {
+    const SAMPLE_COUNT: usize = 3;
+
     let (progress_tx, _progress_rx) = std::sync::mpsc::channel::<DownloadProgress>();
     let cancelled = AtomicBool::new(false);
-    let clips = browse(source, "", 1, &progress_tx, &cancelled)
+    let clips = browse(source, "", SAMPLE_COUNT, &progress_tx, &cancelled)
         .map_err(|error| error.to_string())?;
-    let clip = clips
-        .first()
-        .ok_or_else(|| format!("{} browse returned no clips", source.name()))?;
+    if clips.len() < SAMPLE_COUNT {
+        return Err(format!(
+            "{} browse returned only {} clip(s); expected at least {SAMPLE_COUNT} for release preflight",
+            source.name(),
+            clips.len()
+        ));
+    }
+
     let expected_extension = match source {
         PublicClipSource::SoundButtonsCom
         | PublicClipSource::MyInstantsCom
@@ -113,10 +120,21 @@ pub fn probe_download_start(source: PublicClipSource) -> Result<String, String> 
         | PublicClipSource::Soundimage => "mp3",
         PublicClipSource::MovieSoundClips => "wav",
     };
-    let probe = probe_binary_start(source.name(), &clip.media_url, expected_extension, None)?;
+
+    let mut content_types = Vec::new();
+    for clip in clips.iter().take(SAMPLE_COUNT) {
+        let probe =
+            probe_binary_start(source.name(), &clip.media_url, expected_extension, None)?;
+        content_types.push(if probe.content_type.is_empty() {
+            "unknown".to_string()
+        } else {
+            probe.content_type
+        });
+    }
+
     Ok(format!(
-        ".{expected_extension} header valid for '{}' ({})",
-        clip.title, probe.content_type
+        "{SAMPLE_COUNT} independent .{expected_extension} payload headers valid ({})",
+        content_types.join(", ")
     ))
 }
 
