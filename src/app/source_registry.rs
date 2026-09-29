@@ -3,6 +3,7 @@ pub enum SourceSupport {
     ReleaseReady,
     Candidate,
     ExtraStepsRequired,
+    UsageRestricted,
     Broken,
 }
 
@@ -117,10 +118,10 @@ pub const SOURCES: &[SourceCandidate] = &[
     SourceCandidate { id: 100, name: "Ambient Mixer", url: "https://www.ambient-mixer.com/", support: SourceSupport::ExtraStepsRequired },
 ];
 
-pub fn working_sources() -> impl Iterator<Item = &'static SourceCandidate> {
+pub fn release_sources() -> impl Iterator<Item = &'static SourceCandidate> {
     SOURCES
         .iter()
-        .filter(|source| source.support == SourceSupport::Working)
+        .filter(|source| source.support == SourceSupport::ReleaseReady)
 }
 
 #[cfg(test)]
